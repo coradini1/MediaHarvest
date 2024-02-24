@@ -1,0 +1,19 @@
+{
+  "manifest_version": 3,
+  "name": "Media Harvest",
+  "description": "Base Level Extension",
+  "version": "1.0",
+  "permissions": [
+    "tabs",
+    "activeTab",
+    "http://localhost:3000/*",
+    "storage",
+    "fileSystem",
+    "scripting",
+    "downloads"
+  ],
+  "action": {
+    "default_popup": "index.html",
+    "default_icon": "icon_extensions.png"
+  }
+}
