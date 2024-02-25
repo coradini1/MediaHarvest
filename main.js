@@ -1,4 +1,3 @@
-
 const supportedSites = [
   "youtube.com",
   "facebook.com",
@@ -8,33 +7,70 @@ const supportedSites = [
   "reddit.com",
 ];
 
-document
-  .getElementById("downloadButton")
-  .addEventListener("click", getVideo);
+document.addEventListener("DOMContentLoaded", function() {
+  const locationPath = localStorage.getItem("locationPath");
+  if (locationPath) {
+    enableDownloadButtons();
+  } else {
+    disableDownloadButtons();
+  }
+});
+
+document.getElementById("original").addEventListener("click", getVideo);
+
+document.getElementById("whatsapp").addEventListener("click", getVideo);
+
+document.getElementById("mp4").addEventListener("click", getVideo);
+
 document.getElementById("submitButton").addEventListener("click", folderPath);
 
-document.getElementById("folderPathInput").value = localStorage.getItem("locationPath");
+document.getElementById("folderPathInput").value =
+  localStorage.getItem("locationPath");
+
+document.getElementById("deletePath").addEventListener("click", deletePath);
 
 function folderPath() {
   const locationPath = document.getElementById("folderPathInput").value.trim();
+  console.log(locationPath)
   if (locationPath) {
     localStorage.setItem("locationPath", locationPath);
+    enableDownloadButtons();
   } else {
     console.error("Por favor insira um caminho válido.");
+    disableDownloadButtons();
   }
 }
 
-function getVideo() {
-  if(localStorage.getItem("locationPath") === null) {
+function deletePath() {
+  localStorage.removeItem("locationPath");
+  document.getElementById("folderPathInput").value = ""; 
+  disableDownloadButtons(); 
+}
+
+function enableDownloadButtons() {
+  document.querySelectorAll("#whatsapp, #mp4, #original").forEach((button) => {
+    button.disabled = false;
+  });
+}
+
+function disableDownloadButtons() {
+  document.querySelectorAll("#whatsapp, #mp4, #original").forEach((button) => {
+    button.disabled = true;
+  });
+}
+
+function getVideo(event) {
+  if (localStorage.getItem("locationPath") === null) {
     alert("Por favor insira um caminho válido.");
     return;
   }
   let url = "";
+  let format = this.id;
   chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
     const tab = tabs[0];
     url = tab.url;
     const isSupported = supportedSites.some((site) => url.includes(site));
-    
+
     if (isSupported) {
       fetch("http://localhost:3000", {
         method: "POST",
@@ -44,13 +80,13 @@ function getVideo() {
         body: JSON.stringify({
           url: url,
           path: localStorage.getItem("locationPath"),
+          download: format,
         }),
       }).then((res) => {
         document.getElementById("status").innerText = "Download Pronto!";
         document.getElementById("alert").classList.add("show");
         setTimeout(() => {
-        document.getElementById("alert").classList.remove("show");
-
+          document.getElementById("alert").classList.remove("show");
         }, 1500);
       });
     }
