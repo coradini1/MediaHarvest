@@ -7,7 +7,7 @@ const supportedSites = [
   "reddit.com",
 ];
 
-document.addEventListener("DOMContentLoaded", function() {
+document.addEventListener("DOMContentLoaded", function () {
   const locationPath = localStorage.getItem("locationPath");
   if (locationPath) {
     enableDownloadButtons();
@@ -20,7 +20,7 @@ document.getElementById("original").addEventListener("click", getVideo);
 
 document.getElementById("whatsapp").addEventListener("click", getVideo);
 
-document.getElementById("mp4").addEventListener("click", getVideo);
+document.getElementById("mp3").addEventListener("click", getVideo);
 
 document.getElementById("submitButton").addEventListener("click", folderPath);
 
@@ -31,7 +31,6 @@ document.getElementById("deletePath").addEventListener("click", deletePath);
 
 function folderPath() {
   const locationPath = document.getElementById("folderPathInput").value.trim();
-  console.log(locationPath)
   if (locationPath) {
     localStorage.setItem("locationPath", locationPath);
     enableDownloadButtons();
@@ -43,8 +42,8 @@ function folderPath() {
 
 function deletePath() {
   localStorage.removeItem("locationPath");
-  document.getElementById("folderPathInput").value = ""; 
-  disableDownloadButtons(); 
+  document.getElementById("folderPathInput").value = "";
+  disableDownloadButtons();
 }
 
 function enableDownloadButtons() {

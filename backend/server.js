@@ -19,7 +19,13 @@ app.use(bodyParser.json());
 app.use(allowChromeExtension);
 
 const executeYtDlp = (format, location, url, callback) => {
-  const command = `yt-dlp -f "${format}" -P "${location}" "${url}"`;
+  let command;
+  if (format === "mp3") {
+    command = `yt-dlp --extract-audio --audio-format mp3 --embed-thumbnail --add-metadata -x -o "${location}/%(title)s.%(ext)s" "${url}"`;
+  } else {
+    command = `yt-dlp -f "${format}" -P "${location}" "${url}"`;
+  }
+
   exec(command, (error, stdout, stderr) => {
     if (error) {
       console.error(`Erro ao executar o comando: ${error.message}`);
@@ -41,8 +47,8 @@ app.post("/", (req, res) => {
   let format;
   if (download === "whatsapp") {
     format = "bv[filesize<20M][ext=mp4]+ba.2 / b[vcodec=libx264] / b";
-  } else if (download === "mp4") {
-    format = "bv[ext=mp4]+ba/b";
+  } else if (download === "mp3") {
+    format = "mp3";
   } else {
     format = "bv*+ba/b";
   }
