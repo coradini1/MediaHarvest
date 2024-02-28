@@ -1,75 +1,89 @@
 body {
-    font-family: Arial, sans-serif;
-    background-color: black;
-    width: 250px;
-  }
-  .title {
-    text-align: center;
-    color: white;
-  }
-  .pathInput {
-    width: 100%;
-    padding: 12px 20px;
-    margin: 8px 0;
-    display: inline-block;
-    border: 1px solid #ccc;
-    border-radius: 4px;
-    box-sizing: border-box;
-  }
-  #submitButton {
-    width: 45%;
-    background-color: #4caf50;
-    color: white;
-    padding: 14px 20px;
-    margin: 8px 0;
-    margin-right: 20px;
-    border: none;
-    border-radius: 4px;
-    cursor: pointer;
-  }
-  #submitButton:hover {
-    background-color: #45a049;
-  }
-  #deletePath {
-    width: 45%;
-    background-color: #c70000;
-    color: white;
-    padding: 14px 20px;
-    margin: 8px 0;
-    border: none;
-    border-radius: 4px;
-    cursor: pointer;
-  }
-  #deletePath:hover {
-    background-color: #8b0000;
-  }
-  .alert {
-    display: none;
-    padding: 20px;
-    background-color: green;
-    color: white;
-    margin-bottom: 15px;
-  }
+  font-family: Arial, sans-serif;
+  background-color: black;
+  width: 250px;
+}
+.title {
+  text-align: center;
+  color: white;
+}
+.pathInput {
+  width: 100%;
+  padding: 12px 20px;
+  margin: 8px 0;
+  display: inline-block;
+  border: 1px solid #ccc;
+  border-radius: 4px;
+  box-sizing: border-box;
+}
 
-  .alert.show {
-    display: block;
-  }
-  .status {
-    text-align: center;
-    align-self: center;
-  }
-  .downloadButton {
-    border-radius: 4px;
-    cursor: pointer;
-    width: 100%;
-    padding: 14px 20px;
-    margin: 8px 0;
-    border: none;
-    border-radius: 4px;
-  }
+#openFolder {
+  width: 100%;
+  background-color: rgb(63, 63, 182);
+  color: white;
+  padding: 14px 20px;
+  margin: 8px 0;
+  border: none;
+  border-radius: 4px;
+  cursor: pointer;
+}
+#openFolder:hover {
+  background-color: #3c3c8c;
+}
+#submitButton {
+  width: 45%;
+  background-color: #4caf50;
+  color: white;
+  padding: 14px 20px;
+  margin: 8px 0;
+  margin-right: 20px;
+  border: none;
+  border-radius: 4px;
+  cursor: pointer;
+}
+#submitButton:hover {
+  background-color: #45a049;
+}
+#deletePath {
+  width: 45%;
+  background-color: #c70000;
+  color: white;
+  padding: 14px 20px;
+  margin: 8px 0;
+  border: none;
+  border-radius: 4px;
+  cursor: pointer;
+}
+#deletePath:hover {
+  background-color: #8b0000;
+}
+.alert {
+  display: none;
+  padding: 20px;
+  background-color: green;
+  color: white;
+  margin-bottom: 15px;
+}
 
-  .downloadButton:disabled {
-    background-color: gray;
-    color: white;
-    cursor: none;
-  }
+.alert.show {
+  display: block;
+}
+.status {
+  text-align: center;
+  align-self: center;
+}
+.downloadButton {
+  border-radius: 4px;
+  cursor: pointer;
+  width: 100%;
+  padding: 14px 20px;
+  margin: 8px 0;
+  border: none;
+  border-radius: 4px;
+}
+
+.downloadButton:disabled {
+  background-color: gray;
+  color: white;
+  cursor: none;
+}

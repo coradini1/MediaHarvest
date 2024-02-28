@@ -41,6 +41,23 @@ const executeYtDlp = (format, location, url, callback) => {
   });
 };
 
+app.post("/open", (req, res) => {
+  const { path } = req.body;
+  exec(`start "" "${path}"`, (error, stdout, stderr) => {
+    if (error) {
+      console.error(`Erro ao abrir a pasta: ${error.message}`);
+      res.status(500).send("Erro ao abrir a pasta");
+      return;
+    }
+    if (stderr) {
+      console.error(`Erro de execução: ${stderr}`);
+      res.status(500).send("Erro ao abrir a pasta");
+      return;
+    }
+    res.status(200).send("Pasta aberta!");
+  });
+});
+
 app.post("/", (req, res) => {
   const { path, download, url } = req.body;
 
