@@ -1,11 +1,4 @@
-const supportedSites = [
-  "youtube.com",
-  "facebook.com",
-  "twitter.com",
-  "instagram.com",
-  "tiktok.com",
-  "reddit.com",
-];
+
 
 document.addEventListener("DOMContentLoaded", function () {
   const locationPath = localStorage.getItem("locationPath");
@@ -92,9 +85,8 @@ function getVideo(event) {
   chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
     const tab = tabs[0];
     url = tab.url;
-    const isSupported = supportedSites.some((site) => url.includes(site));
 
-    if (isSupported) {
+    if (true) {
       fetch("http://localhost:3000", {
         method: "POST",
         headers: {
