@@ -3,15 +3,40 @@
   "name": "Media Harvest",
   "description": "Base Level Extension",
   "version": "1.0",
+
   "permissions": [
     "tabs",
     "activeTab",
-    "http://localhost:3000/*",
     "storage",
-    "fileSystem",
     "scripting",
     "downloads"
   ],
+
+  "host_permissions": [
+    "http://localhost:3000/*",
+    "<all_urls>",
+    "https://x.com/*",
+    "https://twitter.com/*",
+    "https://www.instagram.com/*"
+  ],
+
+  "content_scripts": [
+    {
+      "matches": [
+        "<all_urls>",
+        "https://x.com/*",
+        "https://twitter.com/*",
+        "https://www.instagram.com/*"
+      ],
+      "js": ["app.js"],
+      "run_at": "document_idle"
+    }
+  ],
+
+  "background": {
+    "service_worker": "background.js"
+  },
+
   "action": {
     "default_popup": "index.html",
     "default_icon": "icon_extensions.png"

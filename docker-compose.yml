@@ -1,0 +1,12 @@
+services:
+  mediaharvest:
+    build: .
+    container_name: mediaharvest
+    restart: unless-stopped
+    environment:
+      PORT: 3000
+      DOWNLOAD_DIR: /downloads
+    ports:
+      - "3000:3000"
+    volumes:
+      - ./downloads:/downloads
