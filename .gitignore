@@ -1,6 +1,6 @@
-node_modules
-downloads
+node_modules/
+server/node_modules/
+server/downloads/
 .env
-npm-debug.log
 *.log
 .DS_Store

@@ -1,4 +1,5 @@
 node_modules
-.git
 downloads
-npm-debug.log
+.git
+.env
+*.log

@@ -6,6 +6,7 @@ services:
     environment:
       PORT: 3000
       DOWNLOAD_DIR: /downloads
+      MAX_CONCURRENT_DOWNLOADS: 2
     ports:
       - "3000:3000"
     volumes:

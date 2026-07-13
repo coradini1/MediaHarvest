@@ -1,0 +1,69 @@
+<!DOCTYPE html>
+<html lang="pt-br">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <link rel="stylesheet" href="style.css" />
+    <title>Media Harvest</title>
+  </head>
+  <body>
+    <main class="app-shell">
+      <header class="topbar">
+        <div>
+          <span class="eyebrow">Media Harvest</span>
+          <h1>Baixar esta página</h1>
+        </div>
+        <span class="server-state" id="serverState" title="Estado do servidor">offline</span>
+      </header>
+
+      <section class="formats" aria-label="Formato do download">
+        <button class="downloadButton primary" id="original">
+          <span>Original</span>
+          <small>Melhor qualidade</small>
+        </button>
+        <button class="downloadButton" id="whatsapp">
+          <span>WhatsApp</span>
+          <small>Até 20 MB</small>
+        </button>
+        <button class="downloadButton" id="mp3">
+          <span>MP3</span>
+          <small>Somente áudio</small>
+        </button>
+      </section>
+
+      <section class="queue-section">
+        <div class="section-heading">
+          <h2>Downloads</h2>
+          <span id="downloadCount">0 ativos</span>
+        </div>
+        <div id="downloadList" class="download-list">
+          <p class="empty-state">Nenhum download no histórico.</p>
+        </div>
+      </section>
+
+      <details class="settings">
+        <summary>Configurações</summary>
+        <label for="backendUrlInput">Servidor</label>
+        <div class="input-row">
+          <input type="url" id="backendUrlInput" placeholder="http://localhost:3000" />
+          <button id="backendUrlButton">Salvar</button>
+        </div>
+
+        <label for="folderPathInput">Pasta no servidor</label>
+        <div class="input-row">
+          <input type="text" id="folderPathInput" placeholder="/downloads" />
+          <button id="submitButton">Salvar</button>
+        </div>
+        <div class="settings-actions">
+          <button id="deletePath">Usar padrão</button>
+          <button id="openFolder">Abrir pasta</button>
+        </div>
+      </details>
+
+      <div id="alert" class="alert" role="status">
+        <p id="status"></p>
+      </div>
+    </main>
+    <script src="main.js"></script>
+  </body>
+</html>

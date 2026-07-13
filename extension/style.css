@@ -1,0 +1,74 @@
+* { box-sizing: border-box; }
+
+:root {
+  color-scheme: dark;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+}
+
+body {
+  width: 380px;
+  margin: 0;
+  background: #18181a;
+  color: #f4f4f5;
+}
+
+button, input { font: inherit; }
+button { cursor: pointer; }
+
+.app-shell { padding: 16px; }
+.topbar, .section-heading, .input-row, .settings-actions { display: flex; align-items: center; }
+.topbar { justify-content: space-between; gap: 16px; margin-bottom: 15px; }
+.eyebrow { color: #8d8d93; font-size: 10px; font-weight: 650; letter-spacing: .08em; text-transform: uppercase; }
+h1, h2, p { margin: 0; }
+h1 { margin-top: 3px; font-size: 18px; font-weight: 650; letter-spacing: -.02em; }
+h2 { font-size: 12px; font-weight: 650; }
+
+.server-state { padding: 4px 7px; border: 1px solid #3d3d41; border-radius: 4px; color: #8d8d93; font-size: 10px; }
+.server-state.online { border-color: #386849; color: #75bd8e; }
+
+.formats { display: grid; grid-template-columns: 1.25fr 1fr 1fr; gap: 6px; }
+.downloadButton {
+  min-width: 0;
+  padding: 10px;
+  border: 1px solid #3d3d41;
+  border-radius: 7px;
+  background: #232326;
+  color: #ececee;
+  text-align: left;
+}
+.downloadButton:hover { border-color: #65656b; background: #29292c; }
+.downloadButton.primary { border-color: #e4e4e7; background: #e4e4e7; color: #18181a; }
+.downloadButton.primary:hover { background: #fff; }
+.downloadButton span, .downloadButton small { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.downloadButton span { font-size: 12px; font-weight: 650; }
+.downloadButton small { margin-top: 2px; color: #8d8d93; font-size: 9px; }
+.downloadButton.primary small { color: #5d5d62; }
+.downloadButton:disabled { opacity: .45; cursor: wait; }
+
+.queue-section { margin-top: 18px; }
+.section-heading { justify-content: space-between; margin-bottom: 7px; }
+.section-heading span { color: #77777d; font-size: 10px; }
+.download-list { display: flex; max-height: 200px; flex-direction: column; gap: 5px; overflow: auto; }
+.empty-state { padding: 18px 10px; border: 1px dashed #353539; border-radius: 7px; color: #6f6f75; font-size: 11px; text-align: center; }
+.queue-item { padding: 9px; border: 1px solid #353539; border-radius: 7px; background: #202023; }
+.queue-head, .queue-foot { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.queue-title { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 11px; font-weight: 600; }
+.queue-pct { color: #aaaab0; font-size: 10px; font-variant-numeric: tabular-nums; }
+.queue-progress { height: 2px; margin: 7px 0; overflow: hidden; background: #3d3d41; }
+.queue-progress div { height: 100%; background: #e4e4e7; }
+.queue-meta { min-width: 0; overflow: hidden; color: #aaaab0; font-size: 9px; font-weight: 550; text-overflow: ellipsis; white-space: nowrap; }
+.queue-action { padding: 2px 5px; border: 0; background: transparent; color: #9b9ba1; font-size: 9px; }
+.queue-action:hover { color: #fff; }
+
+.settings { margin-top: 15px; border-top: 1px solid #303034; padding-top: 11px; }
+.settings summary { color: #aaaab0; cursor: pointer; font-size: 11px; font-weight: 600; }
+.settings label { display: block; margin: 11px 0 5px; color: #77777d; font-size: 10px; }
+.input-row { gap: 5px; }
+.input-row input { min-width: 0; flex: 1; padding: 7px 8px; border: 1px solid #3d3d41; border-radius: 5px; outline: none; background: #202023; color: #eee; font-size: 11px; }
+.input-row input:focus { border-color: #77777d; }
+.input-row button, .settings-actions button { padding: 7px 9px; border: 1px solid #414146; border-radius: 5px; background: #29292c; color: #d1d1d4; font-size: 10px; }
+.settings-actions { gap: 5px; margin-top: 6px; }
+.settings-actions button { flex: 1; }
+
+.alert { position: fixed; right: 12px; bottom: 12px; left: 12px; padding: 9px 10px; border: 1px solid #49494e; border-radius: 6px; background: #29292d; box-shadow: 0 5px 20px #0008; color: #e5e5e7; font-size: 11px; opacity: 0; pointer-events: none; transform: translateY(5px); transition: .15s ease; }
+.alert.show { opacity: 1; transform: translateY(0); }
