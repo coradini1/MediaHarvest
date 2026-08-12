@@ -1325,7 +1325,7 @@ app.post("/", (req, res) => {
   } else if (download === "mp3") {
     format = "mp3";
   } else {
-    format = "bv*+ba/b";
+    format = "bv*[protocol^=http]+ba[protocol^=http]/b[protocol^=http]/bv*+ba/b";
   }
 
   const existingDownload = Object.entries(downloads).find(([, item]) => {
