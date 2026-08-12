@@ -573,6 +573,7 @@ async function startDownload(id) {
       singleConnection: resolved.singleConnection,
       allowUnsafeExt: resolved.allowUnsafeExt,
       totalBytes: resolved.totalBytes,
+      noMultiConnection: item.noMultiConnection,
     });
   } catch (error) {
     if (isTransientDownloadError(error.message) && (item.retryCount || 0) < 2) {
@@ -865,6 +866,15 @@ app.get("/health", (req, res) => {
   });
 });
 
+const parseHumanSize = (value) => {
+  const match = String(value || "").match(/^([\d.]+)\s*([KMGT]?)i?B$/i);
+  if (!match) return null;
+  const multipliers = { "": 1, K: 1024, M: 1024 ** 2, G: 1024 ** 3, T: 1024 ** 4 };
+  const amount = parseFloat(match[1]);
+  const mult = multipliers[match[2].toUpperCase()] || 1;
+  return Number.isFinite(amount) ? Math.round(amount * mult) : null;
+};
+
 const executeYtDlp = (id, format, location, url, options = {}) => {
   const outputName = options.filename ? safeFilename(options.filename) : null;
   const outputTemplate = outputName ? path.join(location, outputName) : `${location}/%(title)s.%(ext)s`;
@@ -875,12 +885,14 @@ const executeYtDlp = (id, format, location, url, options = {}) => {
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0 Safari/537.36",
   ] : [];
   const unsafeExtArgs = options.allowUnsafeExt ? ["--compat-options", "allow-unsafe-ext"] : [];
-  const externalDownloaderArgs = options.allowUnsafeExt ? [
+  const useMultiConnection = !options.noMultiConnection;
+  const externalDownloaderArgs = useMultiConnection ? [
     "--downloader",
     "aria2c",
     "--downloader-args",
-    "aria2c:-x 8 -s 8 -k 1M --file-allocation=none --summary-interval=0",
+    "aria2c:-x 8 -s 8 -j 8 -k 1M --min-split-size=1M --max-connection-per-server=8 --file-allocation=none --summary-interval=1",
   ] : [];
+  if (downloads[id]) downloads[id].usedMultiConnection = useMultiConnection;
   const concurrentFragments = options.singleConnection ? "1" : "4";
   const progressArgs = [
     "--newline",
@@ -1021,6 +1033,32 @@ const executeYtDlp = (id, format, location, url, options = {}) => {
           return;
         }
 
+        const ariaProgress = part.match(/\[#\w+\s+([\d.]+[KMGT]?i?B)\/([\d.]+[KMGT]?i?B)\((\d+)%\)/);
+        if (ariaProgress) {
+          const item = downloads[id];
+          if (item && !item.cancelled) {
+            const downloaded = parseHumanSize(ariaProgress[1]);
+            const total = parseHumanSize(ariaProgress[2]);
+            const pct = Number(ariaProgress[3]);
+            const dlMatch = part.match(/DL:([\d.]+[KMGT]?i?B)/);
+            const etaMatch = part.match(/ETA:([^\s\]]+)/);
+
+            item.phase = "downloading_video";
+            item.message = phaseMessages.downloading_video;
+            if (Number.isFinite(pct)) item.progress = Math.max(item.progress || 0, Math.min(99, pct));
+            if (downloaded) item.bytesDownloaded = downloaded;
+            if (total) item.totalBytes = total;
+            item.speed = dlMatch ? dlMatch[1].replace(/i/i, "") : item.speed;
+            if (etaMatch) item.eta = etaMatch[1];
+
+            if (Number.isFinite(pct) && pct >= lastLoggedProgress + 10) {
+              lastLoggedProgress = pct;
+              console.log(`[${id}] progresso ${pct}% (aria2)`);
+            }
+          }
+          return;
+        }
+
         if (/Could not resolve host|Temporary failure in name resolution|HTTP Error 502|Bad Gateway|timed out/i.test(part)) {
           updateDownload(id, {
             message: "Falha de rede · tentando novamente",
@@ -1139,6 +1177,28 @@ const executeYtDlp = (id, format, location, url, options = {}) => {
       const rawError = stderr || `yt-dlp finalizou com código ${code}`;
       const error = new Error(formatYtDlpError(rawError, code));
       console.error(`[${id}] erro yt-dlp: ${error.message}`);
+
+      if (downloads[id].usedMultiConnection && !downloads[id].noMultiConnection) {
+        console.log(`[${id}] multi-conexão (aria2) falhou; refazendo em conexão única`);
+        cleanupFailedFiles(downloads[id]);
+        updateDownload(id, {
+          status: "queued",
+          phase: "queued",
+          progress: 0,
+          filename: null,
+          bytesDownloaded: 0,
+          totalBytes: null,
+          speed: null,
+          eta: null,
+          noMultiConnection: true,
+          message: "Otimizando conexão · nova tentativa",
+          error: null,
+          process: null,
+        });
+        pendingDownloads.push(id);
+        releaseDownloadSlot(id);
+        return;
+      }
 
       if (isTransientDownloadError(rawError) && (downloads[id].retryCount || 0) < 2) {
         const retryCount = (downloads[id].retryCount || 0) + 1;

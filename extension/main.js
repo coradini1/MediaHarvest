@@ -262,6 +262,27 @@ async function openFolder() {
   }
 }
 
+async function loadVideoButtonToggle() {
+  const result = await callApi(
+    extensionApi.storage.local.get,
+    extensionApi.storage.local,
+    ["showVideoButton"]
+  );
+  document.getElementById("toggleVideoButton").checked = result.showVideoButton !== false;
+}
+
+async function saveVideoButtonToggle(event) {
+  const enabled = event.currentTarget.checked;
+  try {
+    await callApi(extensionApi.storage.local.set, extensionApi.storage.local, {
+      showVideoButton: enabled,
+    });
+    popupToast(enabled ? "Botão nos vídeos ativado" : "Botão nos vídeos desativado");
+  } catch (error) {
+    popupToast(error.message || "Não foi possível salvar");
+  }
+}
+
 let toastTimer;
 function popupToast(message) {
   const alert = document.getElementById("alert");
@@ -278,6 +299,7 @@ document.getElementById("backendUrlButton").addEventListener("click", saveBacken
 document.getElementById("submitButton").addEventListener("click", savePath);
 document.getElementById("deletePath").addEventListener("click", resetPath);
 document.getElementById("openFolder").addEventListener("click", openFolder);
+document.getElementById("toggleVideoButton").addEventListener("change", saveVideoButtonToggle);
 
 extensionApi.runtime.onMessage.addListener((message) => {
   if (message?.type === "downloadsUpdated") renderDownloads(message.downloads || []);
@@ -291,6 +313,7 @@ document.addEventListener("DOMContentLoaded", async () => {
       ? ""
       : settings.locationPath;
     checkServer(settings.backendUrl);
+    await loadVideoButtonToggle();
     const response = await sendMessage({ type: "getDownloads" }).catch(() => null);
     renderDownloads(response?.downloads || []);
   } catch (error) {

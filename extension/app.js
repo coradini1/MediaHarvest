@@ -62,7 +62,33 @@ if (extensionApi.runtime && extensionApi.runtime.onMessage) {
     .catch(() => {});
 }
 
-startObserver();
+let videoButtonEnabled = true;
+
+storageGet(["showVideoButton"], (result) => {
+  videoButtonEnabled = result?.showVideoButton !== false;
+  startObserver();
+});
+
+if (extensionApi.storage && extensionApi.storage.onChanged) {
+  extensionApi.storage.onChanged.addListener((changes, area) => {
+    if (area !== "local" || !changes.showVideoButton) return;
+    videoButtonEnabled = changes.showVideoButton.newValue !== false;
+    if (videoButtonEnabled) injectPageControls();
+    else removeNativeVideoButtons();
+  });
+}
+
+function injectPageControls() {
+  if (isSite("twitter.com") || isSite("x.com")) {
+    injectTwitterButtons();
+  }
+
+  if (isSite("instagram.com")) {
+    injectInstagramButtons();
+  }
+
+  injectNativeVideoButtons();
+}
 
 function startObserver() {
   if (!document.body) return;
@@ -79,21 +105,16 @@ function startObserver() {
   });
 
   injectPageControls();
+}
 
-  function injectPageControls() {
-    if (isSite("twitter.com") || isSite("x.com")) {
-      injectTwitterButtons();
-    }
-
-    if (isSite("instagram.com")) {
-      injectInstagramButtons();
-    }
-
-    injectNativeVideoButtons();
-  }
+function removeNativeVideoButtons() {
+  document
+    .querySelectorAll("#media-harvest-native-button, .media-harvest-native-button")
+    .forEach((button) => button.remove());
 }
 
 function injectNativeVideoButtons() {
+  if (!videoButtonEnabled) return;
   if (sessionStorage.getItem(`mediaHarvestHidden:${site}`) === "true") return;
   if (document.getElementById("media-harvest-native-button")) return;
 
