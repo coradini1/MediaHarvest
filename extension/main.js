@@ -91,7 +91,6 @@ function renderDownloads(downloads) {
     const active = ["queued", "in_progress", "transferring", "cancelling"].includes(download.status);
     const preparing = ["ready_for_browser", "retrying"].includes(download.status);
     const retryable = Boolean(download.canRetryTransfer);
-    const retryableDownload = download.status === "error" && !retryable;
     const progress = download.status === "done"
       ? 100
       : Math.min(100, Math.max(0, Number(download.progress) || 0));
@@ -123,15 +122,31 @@ function renderDownloads(downloads) {
     meta.textContent = [
       download.source || "site",
       formatType(download.format),
-      download.status === "error" ? download.error : download.message || download.phase,
+      download.status === "error" ? null : (download.message || download.phase),
       size,
       download.speed ? `${download.speed}/s` : null,
     ].filter(Boolean).join(" · ");
+
+    const actions = document.createElement("div");
+    actions.className = "queue-actions";
+
+    const transient = ["retrying", "cancelling", "ready_for_browser"].includes(download.status);
+    const canRestart = Boolean(download.sourceUrl || download.pageUrl) && !transient;
+    if (canRestart) {
+      const restart = document.createElement("button");
+      restart.className = "queue-action restart";
+      restart.textContent = "Reiniciar";
+      restart.addEventListener("click", async () => {
+        const response = await sendMessage({ type: "restartDownload", id: download.id })
+          .catch((error) => ({ ok: false, error: error.message }));
+        if (!response?.ok) popupToast(response?.error || "Não foi possível reiniciar");
+      });
+      actions.appendChild(restart);
+    }
+
     const action = document.createElement("button");
     action.className = "queue-action";
-    action.textContent = retryableDownload
-      ? "Repetir"
-      : retryable
+    action.textContent = retryable
       ? "Tentar novamente"
       : preparing
       ? (download.status === "retrying" ? "Repetindo" : "Preparando")
@@ -141,19 +156,24 @@ function renderDownloads(downloads) {
     action.disabled = download.status === "cancelling" || preparing;
     action.addEventListener("click", async () => {
       const response = await sendMessage({
-        type: retryableDownload
-          ? "retryDownload"
-          : retryable
-            ? "retryTransfer"
-            : active
-              ? "cancelDownload"
-              : "removeDownload",
+        type: retryable ? "retryTransfer" : active ? "cancelDownload" : "removeDownload",
         id: download.id,
       }).catch((error) => ({ ok: false, error: error.message }));
       if (!response?.ok) popupToast(response?.error || "Ação indisponível");
     });
-    foot.append(meta, action);
+    actions.appendChild(action);
+
+    foot.append(meta, actions);
     item.append(head, track, foot);
+
+    if (download.status === "error" && download.error) {
+      const err = document.createElement("p");
+      err.className = "queue-error";
+      err.textContent = download.error;
+      err.title = download.error;
+      item.appendChild(err);
+    }
+
     list.appendChild(item);
   });
 }
@@ -188,6 +208,7 @@ async function startDownload(event) {
         title: tab.title || "Mídia sem título",
         pageUrl: tab.url,
         source: new URL(tab.url).hostname,
+        userAgent: navigator.userAgent,
       },
     });
 
@@ -262,6 +283,40 @@ async function openFolder() {
   }
 }
 
+async function loadCookies() {
+  const result = await callApi(
+    extensionApi.storage.local.get,
+    extensionApi.storage.local,
+    ["cookiesTxt"]
+  );
+  document.getElementById("cookiesInput").value = result.cookiesTxt || "";
+}
+
+async function saveCookies() {
+  const value = document.getElementById("cookiesInput").value.trim();
+  try {
+    if (value) {
+      await callApi(extensionApi.storage.local.set, extensionApi.storage.local, { cookiesTxt: value });
+      popupToast("Cookies salvos");
+    } else {
+      await callApi(extensionApi.storage.local.remove, extensionApi.storage.local, "cookiesTxt");
+      popupToast("Cookies vazios · removidos");
+    }
+  } catch (error) {
+    popupToast(error.message || "Não foi possível salvar os cookies");
+  }
+}
+
+async function clearCookies() {
+  try {
+    await callApi(extensionApi.storage.local.remove, extensionApi.storage.local, "cookiesTxt");
+    document.getElementById("cookiesInput").value = "";
+    popupToast("Cookies removidos");
+  } catch (error) {
+    popupToast(error.message || "Não foi possível remover os cookies");
+  }
+}
+
 async function loadVideoButtonToggle() {
   const result = await callApi(
     extensionApi.storage.local.get,
@@ -300,6 +355,8 @@ document.getElementById("submitButton").addEventListener("click", savePath);
 document.getElementById("deletePath").addEventListener("click", resetPath);
 document.getElementById("openFolder").addEventListener("click", openFolder);
 document.getElementById("toggleVideoButton").addEventListener("change", saveVideoButtonToggle);
+document.getElementById("saveCookies").addEventListener("click", saveCookies);
+document.getElementById("clearCookies").addEventListener("click", clearCookies);
 
 extensionApi.runtime.onMessage.addListener((message) => {
   if (message?.type === "downloadsUpdated") renderDownloads(message.downloads || []);
@@ -314,6 +371,7 @@ document.addEventListener("DOMContentLoaded", async () => {
       : settings.locationPath;
     checkServer(settings.backendUrl);
     await loadVideoButtonToggle();
+    await loadCookies();
     const response = await sendMessage({ type: "getDownloads" }).catch(() => null);
     renderDownloads(response?.downloads || []);
   } catch (error) {

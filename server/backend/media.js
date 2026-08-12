@@ -574,6 +574,8 @@ async function startDownload(id) {
       allowUnsafeExt: resolved.allowUnsafeExt,
       totalBytes: resolved.totalBytes,
       noMultiConnection: item.noMultiConnection,
+      cookies: item.cookies,
+      userAgent: item.userAgent,
     });
   } catch (error) {
     if (isTransientDownloadError(error.message) && (item.retryCount || 0) < 2) {
@@ -893,6 +895,17 @@ const executeYtDlp = (id, format, location, url, options = {}) => {
     "aria2c:-x 8 -s 8 -j 8 -k 1M --min-split-size=1M --max-connection-per-server=8 --file-allocation=none --summary-interval=1",
   ] : [];
   if (downloads[id]) downloads[id].usedMultiConnection = useMultiConnection;
+  let cookieArgs = [];
+  if (options.cookies) {
+    const cookiesFile = path.join(location, "cookies.txt");
+    try {
+      fs.writeFileSync(cookiesFile, options.cookies, "utf8");
+      cookieArgs = ["--cookies", cookiesFile];
+    } catch (err) {
+      console.error(`[${id}] falha ao gravar cookies: ${err.message}`);
+    }
+  }
+  const userAgentArgs = options.userAgent ? ["--user-agent", options.userAgent] : [];
   const concurrentFragments = options.singleConnection ? "1" : "4";
   const progressArgs = [
     "--newline",
@@ -937,6 +950,8 @@ const executeYtDlp = (id, format, location, url, options = {}) => {
       ...unsafeExtArgs,
       ...externalDownloaderArgs,
       ...headerArgs,
+      ...cookieArgs,
+      ...userAgentArgs,
       "-o",
       outputTemplate,
       url,
@@ -952,6 +967,8 @@ const executeYtDlp = (id, format, location, url, options = {}) => {
       ...unsafeExtArgs,
       ...externalDownloaderArgs,
       ...headerArgs,
+      ...cookieArgs,
+      ...userAgentArgs,
       "-o",
       outputTemplate,
       url,
@@ -1287,7 +1304,7 @@ app.post("/open", (req, res) => {
 });
 
 app.post("/", (req, res) => {
-  const { path: requestedPath, download, url, title } = req.body;
+  const { path: requestedPath, download, url, title, cookies, userAgent } = req.body;
   const baseDownloadLocation = resolveDownloadLocation(requestedPath);
 
   console.log(`novo download: tipo=${download || "original"} url=${url || "sem url"}`);
@@ -1332,6 +1349,8 @@ app.post("/", (req, res) => {
     download,
     titleHint: title,
     format,
+    cookies: typeof cookies === "string" && cookies.trim() ? cookies : null,
+    userAgent: typeof userAgent === "string" && userAgent.trim() ? userAgent.trim() : null,
     createdAt: new Date().toISOString(),
   });
 

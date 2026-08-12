@@ -21,6 +21,20 @@ function callApi(method, context, ...args) {
   });
 }
 
+async function getStoredCookies() {
+  try {
+    const result = await callApi(
+      extensionApi.storage.local.get,
+      extensionApi.storage.local,
+      ["cookiesTxt"]
+    );
+    const value = (result.cookiesTxt || "").trim();
+    return value || undefined;
+  } catch (_) {
+    return undefined;
+  }
+}
+
 async function persistDownloads() {
   const value = [...downloads.values()];
   persistenceQueue = persistenceQueue
@@ -257,9 +271,12 @@ async function startDownload(message, sender) {
   pendingDownloads.add(key);
 
   try {
+    const cookies = await getStoredCookies();
     const payload = {
       ...message.payload,
       title: message.payload.title || message.meta?.title || null,
+      cookies,
+      userAgent: message.meta?.userAgent || undefined,
     };
     const response = await fetchWithTimeout(backendUrl, {
       method: "POST",
@@ -443,6 +460,61 @@ async function retryDownload(id) {
   }
 }
 
+async function restartDownload(id) {
+  const item = downloads.get(id);
+  if (!item) throw new Error("Download não encontrado");
+
+  const sourceUrl = item.sourceUrl || item.pageUrl;
+  if (!sourceUrl) throw new Error("A URL original deste download não está disponível");
+
+  if (["queued", "in_progress", "transferring", "cancelling"].includes(item.status)) {
+    await cancelDownload(id).catch(() => {});
+  }
+
+  const snapshot = {
+    backendUrl: item.backendUrl,
+    downloadPath: item.downloadPath,
+    format: item.format,
+    title: item.title,
+    pageUrl: item.pageUrl,
+    source: item.source,
+    tabId: item.tabId,
+  };
+
+  item.status = "retrying";
+  item.message = "Reiniciando...";
+  item.error = null;
+  clearTimeout(pollTimers.get(id));
+  await broadcastDownloads();
+
+  try {
+    const replacement = await startDownload({
+      backendUrl: snapshot.backendUrl,
+      payload: {
+        url: sourceUrl,
+        path: snapshot.downloadPath || DEFAULT_DOWNLOAD_PATH,
+        download: snapshot.format || "original",
+        title: snapshot.title || null,
+      },
+      meta: {
+        title: snapshot.title,
+        pageUrl: snapshot.pageUrl || sourceUrl,
+        source: snapshot.source,
+      },
+    }, { tab: { id: snapshot.tabId } });
+
+    if (replacement.id !== id) downloads.delete(id);
+    await broadcastDownloads();
+    return replacement;
+  } catch (error) {
+    item.status = "error";
+    item.error = error.message;
+    item.message = error.message;
+    await broadcastDownloads();
+    throw error;
+  }
+}
+
 const initialization = callApi(
   extensionApi.storage.local.get,
   extensionApi.storage.local,
@@ -511,6 +583,13 @@ extensionApi.runtime.onMessage.addListener((message, sender, sendResponse) => {
 
   if (message.type === "retryDownload" && message.id) {
     initialization.then(() => retryDownload(message.id))
+      .then(() => sendResponse({ ok: true }))
+      .catch((error) => sendResponse({ ok: false, error: error.message }));
+    return true;
+  }
+
+  if (message.type === "restartDownload" && message.id) {
+    initialization.then(() => restartDownload(message.id))
       .then(() => sendResponse({ ok: true }))
       .catch((error) => sendResponse({ ok: false, error: error.message }));
     return true;

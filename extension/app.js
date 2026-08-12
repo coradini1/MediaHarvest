@@ -45,6 +45,7 @@ function startManagedDownload(backendUrl, url, path, download) {
       title: document.title,
       pageUrl: window.location.href,
       source: window.location.hostname,
+      userAgent: navigator.userAgent,
     },
   }).then((response) => {
     if (!response?.ok) throw new Error(response?.error || "Não foi possível iniciar o download");
@@ -409,8 +410,11 @@ function ensureSidebar() {
     .mh-download-progress>.bar { height:100%; width:0; background:#e4e4e7; transition:width .25s ease; }
     .mh-download-foot { display:flex; align-items:center; justify-content:space-between; gap:8px; margin-top:8px; }
     .mh-download-status { min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; color:#d0d0d4; font-size:10px; font-weight:550; }
+    .mh-download-actions { flex:0 0 auto; display:flex; gap:5px; }
     .mh-download-action { flex:0 0 auto; padding:3px 7px; border:1px solid #4a4a4e; border-radius:4px; background:transparent; color:#c8c8cd; cursor:pointer; font:600 10px -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif; }
     .mh-download-action:hover { border-color:#77777d; color:#fff; }
+    .mh-download-action:disabled { opacity:.5; cursor:default; }
+    .mh-download-error { margin-top:8px; padding:7px 9px; border:1px solid rgba(198,94,101,.4); border-radius:6px; background:rgba(198,94,101,.1); color:#f0a7ab; font-size:10px; line-height:1.4; word-break:break-word; white-space:normal; }
     .mh-download-item.done .mh-download-progress>.bar { background:#58a978; }
     .mh-download-item.error .mh-download-progress>.bar { background:#c65e65; }
     .mh-download-item.cancelled { opacity:.68; }
@@ -523,7 +527,6 @@ function renderDownloads(downloads) {
     const active = ["queued", "in_progress", "transferring", "cancelling"].includes(download.status);
     const preparing = ["ready_for_browser", "retrying"].includes(download.status);
     const retryable = Boolean(download.canRetryTransfer);
-    const retryableDownload = download.status === "error" && !retryable;
     const statusText = downloadStatusText(download);
 
     const item = document.createElement("article");
@@ -557,14 +560,33 @@ function renderDownloads(downloads) {
     foot.className = "mh-download-foot";
     const status = document.createElement("div");
     status.className = "mh-download-status";
-    status.textContent = statusText;
+    status.textContent = download.status === "error" ? "Falhou" : statusText;
     status.title = statusText;
+
+    const actions = document.createElement("div");
+    actions.className = "mh-download-actions";
+
+    const transient = ["retrying", "cancelling", "ready_for_browser"].includes(download.status);
+    const canRestart = Boolean(download.sourceUrl || download.pageUrl) && !transient;
+    if (canRestart) {
+      const restart = document.createElement("button");
+      restart.type = "button";
+      restart.className = "mh-download-action restart";
+      restart.textContent = "Reiniciar";
+      restart.addEventListener("click", () => {
+        sendRuntimeMessage({ type: "restartDownload", id: download.id })
+          .then((response) => {
+            if (!response?.ok) showToast(response?.error || "Não foi possível reiniciar");
+          })
+          .catch((error) => showToast(error.message));
+      });
+      actions.appendChild(restart);
+    }
+
     const action = document.createElement("button");
     action.type = "button";
     action.className = "mh-download-action";
-    action.textContent = retryableDownload
-      ? "Repetir"
-      : retryable
+    action.textContent = retryable
       ? "Tentar novamente"
       : preparing
       ? (download.status === "retrying" ? "Repetindo" : "Preparando")
@@ -573,21 +595,26 @@ function renderDownloads(downloads) {
         : "Remover";
     action.disabled = download.status === "cancelling" || preparing;
     action.addEventListener("click", () => {
-      const type = retryableDownload
-        ? "retryDownload"
-        : retryable
-          ? "retryTransfer"
-          : active
-            ? "cancelDownload"
-            : "removeDownload";
+      const type = retryable ? "retryTransfer" : active ? "cancelDownload" : "removeDownload";
       sendRuntimeMessage({ type, id: download.id })
         .then((response) => {
           if (!response?.ok) showToast(response?.error || "Ação indisponível");
         })
         .catch((error) => showToast(error.message));
     });
-    foot.append(status, action);
+    actions.appendChild(action);
+
+    foot.append(status, actions);
     item.append(head, progressTrack, foot);
+
+    if (download.status === "error" && download.error) {
+      const err = document.createElement("div");
+      err.className = "mh-download-error";
+      err.textContent = download.error;
+      err.title = download.error;
+      item.appendChild(err);
+    }
+
     list.appendChild(item);
   });
 }

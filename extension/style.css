@@ -69,8 +69,12 @@ h2 { font-size: 12px; font-weight: 650; }
 .queue-progress { height: 2px; margin: 7px 0; overflow: hidden; background: #3d3d41; }
 .queue-progress div { height: 100%; background: #e4e4e7; }
 .queue-meta { min-width: 0; overflow: hidden; color: #aaaab0; font-size: 9px; font-weight: 550; text-overflow: ellipsis; white-space: nowrap; }
+.queue-actions { display: flex; flex: 0 0 auto; gap: 4px; }
 .queue-action { padding: 2px 5px; border: 0; background: transparent; color: #9b9ba1; font-size: 9px; }
 .queue-action:hover { color: #fff; }
+.queue-action.restart { border: 1px solid #414146; border-radius: 4px; color: #cdcdd2; }
+.queue-action.restart:hover { border-color: #77777d; color: #fff; }
+.queue-error { margin-top: 7px; color: #f0a0a4; font-size: 10px; line-height: 1.35; word-break: break-word; }
 
 .settings { margin-top: 15px; border-top: 1px solid #303034; padding-top: 11px; }
 .settings summary { color: #aaaab0; cursor: pointer; font-size: 11px; font-weight: 600; }
@@ -78,6 +82,8 @@ h2 { font-size: 12px; font-weight: 650; }
 .input-row { gap: 5px; }
 .input-row input { min-width: 0; flex: 1; padding: 7px 8px; border: 1px solid #3d3d41; border-radius: 5px; outline: none; background: #202023; color: #eee; font-size: 11px; }
 .input-row input:focus { border-color: #77777d; }
+.settings textarea { width: 100%; margin-top: 2px; padding: 7px 8px; border: 1px solid #3d3d41; border-radius: 5px; outline: none; background: #202023; color: #eee; font: 10px/1.4 ui-monospace, "SFMono-Regular", Menlo, Consolas, monospace; resize: vertical; }
+.settings textarea:focus { border-color: #77777d; }
 .input-row button, .settings-actions button { padding: 7px 9px; border: 1px solid #414146; border-radius: 5px; background: #29292c; color: #d1d1d4; font-size: 10px; }
 .settings-actions { gap: 5px; margin-top: 6px; }
 .settings-actions button { flex: 1; }
