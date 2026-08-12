@@ -3,6 +3,7 @@ const { spawn } = require("child_process");
 const cors = require("cors");
 const fs = require("fs");
 const path = require("path");
+const dns = require("dns").promises;
 
 const app = express();
 
@@ -113,12 +114,364 @@ const updateDownload = (id, changes) => {
   return true;
 };
 
+const decodeHtml = (value) => String(value || "")
+  .replace(/&amp;/g, "&")
+  .replace(/&quot;/g, '"')
+  .replace(/&#39;/g, "'")
+  .replace(/&lt;/g, "<")
+  .replace(/&gt;/g, ">");
+
+const extractJsString = (html, name) => {
+  const match = html.match(new RegExp(`var\\s+${name}\\s*=\\s*["']([^"']+)["']`));
+  return match ? decodeHtml(match[1]).replace(/\\\//g, "/") : null;
+};
+
+const extractMetaContent = (html, property) => {
+  const match = html.match(new RegExp(`<meta\\s+property=["']${property}["']\\s+content=["']([^"']+)["']`, "i"));
+  return match ? decodeHtml(match[1]).replace(/\\\//g, "/") : null;
+};
+
+const extractObjectStringProperty = (html, name) => {
+  const match = String(html || "").match(new RegExp(`${name}:\\s*['\"]([^'\"]+)['\"]`, "i"));
+  return match ? decodeHtml(match[1]).replace(/\\\//g, "/") : null;
+};
+
+const decodeJsString = (value) => {
+  const decoded = decodeHtml(value || "")
+    .replace(/\\\//g, "/")
+    .replace(/\\u([0-9a-f]{4})/gi, (_, hex) => String.fromCharCode(parseInt(hex, 16)))
+    .replace(/\\x([0-9a-f]{2})/gi, (_, hex) => String.fromCharCode(parseInt(hex, 16)));
+
+  try {
+    return /^https?%3A%2F%2F/i.test(decoded) ? decodeURIComponent(decoded) : decoded;
+  } catch (_) {
+    return decoded;
+  }
+};
+
+const extractPlayerCallArg = (html, name) => {
+  const match = String(html || "").match(new RegExp(`(?:html5player|player)\\.${name}\\(['\"]([^'\"]+)['\"]\\)`, "i"));
+  return match ? decodeJsString(match[1]) : null;
+};
+
+const normalizeMediaUrl = (value, pageUrl) => {
+  const decoded = decodeJsString(value || "").trim();
+  if (!decoded) return null;
+
+  try {
+    const normalized = decoded.startsWith("//")
+      ? new URL(`${new URL(pageUrl).protocol}${decoded}`)
+      : new URL(decoded, pageUrl);
+
+    return /^https?:$/i.test(normalized.protocol) ? normalized.toString() : null;
+  } catch (_) {
+    return null;
+  }
+};
+
+const uniqueMediaUrls = (urls, pageUrl) => {
+  const seen = new Set();
+
+  return urls.flatMap((url) => {
+    const normalized = normalizeMediaUrl(url, pageUrl);
+    if (!normalized || seen.has(normalized)) return [];
+    seen.add(normalized);
+    return [normalized];
+  });
+};
+
+const mediaUrlQualityScore = (url) => {
+  const value = decodeURIComponent(String(url || "")).toLowerCase();
+  const resolutionMatches = [...value.matchAll(/(?:^|[^0-9])([1-9][0-9]{2,3})p(?:[^0-9]|$)|(?:^|[^0-9])([1-9][0-9]{2,3})x([1-9][0-9]{2,3})(?:[^0-9]|$)/g)];
+  const resolution = resolutionMatches.reduce((best, match) => {
+    const height = Number(match[1] || match[3] || 0);
+    return Math.max(best, height);
+  }, 0);
+  const qualityHints = [
+    [/\b(?:uhd|4k|2160)\b/, 2160],
+    [/\b(?:qhd|2k|1440)\b/, 1440],
+    [/\b(?:fhd|fullhd|1080)\b/, 1080],
+    [/\b(?:hd|720)\b/, 720],
+    [/\b(?:sd|480)\b/, 480],
+    [/\b(?:low|360)\b/, 360],
+  ];
+  const hinted = qualityHints.reduce((best, [pattern, score]) => pattern.test(value) ? Math.max(best, score) : best, 0);
+  const quality = Math.max(resolution, hinted);
+  const isPlaylist = /\.m3u8(?:\?|$)/i.test(url);
+
+  return (isPlaylist ? 10000 : 0) + quality;
+};
+
+const sortMediaUrlsByQuality = (urls) => [...urls].sort((a, b) => mediaUrlQualityScore(b) - mediaUrlQualityScore(a));
+
+const firstDnsResolvableUrl = async (urls) => {
+  for (const url of urls) {
+    try {
+      const parsed = new URL(url);
+      await dns.lookup(parsed.hostname);
+      return url;
+    } catch (_) {}
+  }
+
+  return urls[0] || null;
+};
+
+const kvsLicenseToken = (licenseCode) => {
+  const license = String(licenseCode || "").replace(/\$/g, "");
+  const values = [...license].map((char) => Number(char));
+  const modLicense = license.replace(/0/g, "1");
+  const center = Math.floor(modLicense.length / 2);
+  const frontHalf = Number(modLicense.slice(0, center + 1));
+  const backHalf = Number(modLicense.slice(center));
+  const mod = String(4 * Math.abs(frontHalf - backHalf)).slice(0, center + 1);
+
+  return [...mod].flatMap((char, index) => {
+    const current = Number(char);
+    return [0, 1, 2, 3].map((offset) => (values[index + offset] + current) % 10);
+  });
+};
+
+const resolveKvsFunctionUrl = (videoUrl, licenseCode) => {
+  if (!videoUrl || !videoUrl.startsWith("function/0/")) return videoUrl || null;
+
+  const parsed = new URL(videoUrl.slice("function/0/".length));
+  const token = kvsLicenseToken(licenseCode);
+  const parts = parsed.pathname.split("/");
+  const hash = (parts[3] || "").slice(0, 32);
+  const indices = [...Array(32).keys()];
+  let accum = 0;
+
+  if (hash.length !== 32 || token.length < 32) return null;
+
+  for (let src = 31; src >= 0; src -= 1) {
+    accum += token[src];
+    const dest = (src + accum) % 32;
+    [indices[src], indices[dest]] = [indices[dest], indices[src]];
+  }
+
+  parts[3] = indices.map((index) => hash[index]).join("") + parts[3].slice(32);
+  parsed.pathname = parts.join("/");
+  return parsed.toString();
+};
+
+const extractKvsVideoUrl = (html) => {
+  const videoUrl = extractObjectStringProperty(html, "video_url");
+  const licenseCode = extractObjectStringProperty(html, "license_code");
+
+  return resolveKvsFunctionUrl(videoUrl, licenseCode);
+};
+
+const extractGenericHtmlMediaUrls = (html, pageUrl) => {
+  const content = String(html || "");
+  const candidates = [
+    extractKvsVideoUrl(content),
+    extractPlayerCallArg(content, "setVideoUrlHigh"),
+    extractPlayerCallArg(content, "setVideoUrl"),
+    extractPlayerCallArg(content, "setVideoUrlLow"),
+    extractPlayerCallArg(content, "setVideoHLS"),
+    extractMetaContent(content, "og:video"),
+    extractMetaContent(content, "og:video:url"),
+    extractMetaContent(content, "og:video:secure_url"),
+  ];
+
+  for (const match of content.matchAll(/<(?:source|video)\b[^>]*\bsrc=["']([^"']+)["']/gi)) {
+    candidates.push(match[1]);
+  }
+
+  for (const match of content.matchAll(/https?:\\?\/\\?\/[^"'<>\s]+?\.(?:mp4|m3u8)(?:\?[^"'<>\s]*)?/gi)) {
+    candidates.push(match[0]);
+  }
+
+  return sortMediaUrlsByQuality(uniqueMediaUrls(candidates, pageUrl));
+};
+
+const extractGenericHtmlTitle = (html) => {
+  const title = extractPlayerCallArg(html, "setVideoTitle")
+    || extractMetaContent(html, "og:title")
+    || (String(html || "").match(/<title>([^<]+)<\/title>/i) || [])[1];
+
+  return safeFilename(String(title || "").replace(/\s*-\s*[^-<]{2,40}\s*$/i, ""));
+};
+
+const resolveGenericHtmlMediaPageUrl = async (url) => {
+  let response;
+
+  try {
+    response = await fetch(url, {
+      headers: {
+        accept: "text/html,application/xhtml+xml",
+        "user-agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0 Safari/537.36",
+      },
+    });
+  } catch (error) {
+    if (isTransientDownloadError(error.message)) throw error;
+    return { url };
+  }
+
+  if (!response.ok) {
+    return { url };
+  }
+
+  const contentType = response.headers.get("content-type") || "";
+  if (contentType && !/html|text\/plain/i.test(contentType)) {
+    return { url };
+  }
+
+  const html = await response.text();
+  const mediaUrls = extractGenericHtmlMediaUrls(html, url);
+
+  if (!mediaUrls.length) {
+    return { url };
+  }
+
+  const mediaUrl = await firstDnsResolvableUrl(mediaUrls);
+  const title = extractGenericHtmlTitle(html);
+
+  return {
+    url: mediaUrl,
+    filename: title ? `${title}.mp4` : null,
+    title,
+    referer: url,
+    singleConnection: true,
+  };
+};
+
+const validateDirectVideoUrl = async (videoUrl, referer) => {
+  const response = await fetch(videoUrl, {
+    method: "HEAD",
+    redirect: "follow",
+    headers: {
+      "user-agent": "Mozilla/5.0 MediaHarvest/1.0",
+      referer,
+    },
+  });
+
+  const contentType = response.headers.get("content-type") || "";
+  const contentLength = Number(response.headers.get("content-length") || 0);
+
+  if (!response.ok || !/^video\//i.test(contentType) || (contentLength > 0 && contentLength < 1024 * 1024)) {
+    throw new Error(`URL direta do video invalida: HTTP ${response.status}, ${contentType || "sem content-type"}, ${contentLength || "tamanho desconhecido"} bytes`);
+  }
+
+  return contentLength || null;
+};
+
+const safeFilename = (filename) => {
+  const clean = decodeHtml(filename || "")
+    .replace(/[\\/:*?"<>|\x00-\x1F]/g, "_")
+    .trim();
+
+  return clean || null;
+};
+
+const resolveHostedFilePageUrl = async (url) => {
+  let parsed;
+
+  try {
+    parsed = new URL(url);
+  } catch (_) {
+    return { url };
+  }
+
+  if (!parsed.pathname.startsWith("/f/")) {
+    return resolveGenericHtmlMediaPageUrl(url);
+  }
+
+  const response = await fetch(url, {
+    headers: {
+      "user-agent": "Mozilla/5.0 MediaHarvest/1.0",
+    },
+  });
+
+  if (!response.ok) {
+    throw new Error(`Pagina do arquivo retornou HTTP ${response.status}`);
+  }
+
+  const html = await response.text();
+  const cdnUrl = extractJsString(html, "jsCDN") || extractMetaContent(html, "og:video") || extractMetaContent(html, "og:video:url");
+  const signUrl = extractJsString(html, "signUrl");
+  const titleMatch = html.match(/<title>([^<|]+)(?:\s*\|[^<]*)?<\/title>/i);
+  const filename = safeFilename(extractMetaContent(html, "og:title") || (titleMatch && titleMatch[1]));
+
+  if (!cdnUrl) {
+    return { url };
+  }
+
+  const cdn = new URL(cdnUrl);
+
+  if (!signUrl) {
+    return {
+      url: cdn.toString(),
+      filename,
+      referer: url,
+      singleConnection: true,
+    };
+  }
+
+  const sign = new URL(signUrl);
+  sign.searchParams.set("path", decodeURIComponent(cdn.pathname));
+
+  const signResponse = await fetch(sign, {
+    headers: {
+      "user-agent": "Mozilla/5.0 MediaHarvest/1.0",
+      referer: url,
+    },
+  });
+
+  if (!signResponse.ok) {
+    throw new Error(`Assinatura do arquivo retornou HTTP ${signResponse.status}`);
+  }
+
+  const signed = await signResponse.json();
+
+  if (!signed.token || !signed.ex) {
+    throw new Error("Assinatura do arquivo nao retornou token de download");
+  }
+
+  cdn.searchParams.set("token", signed.token);
+  cdn.searchParams.set("ex", signed.ex);
+
+  return {
+    url: cdn.toString(),
+    filename,
+    referer: url,
+    singleConnection: true,
+  };
+};
+
 const listDownloadFiles = (dir) => {
   if (!dir || !fs.existsSync(dir)) return [];
   return fs.readdirSync(dir, { withFileTypes: true }).flatMap((entry) => {
     const fullPath = path.join(dir, entry.name);
     return entry.isDirectory() ? listDownloadFiles(fullPath) : [fullPath];
   });
+};
+
+const startFileDownloadMonitor = (id, totalBytes) => {
+  const item = downloads[id];
+  if (!item || item.downloadTimer || !totalBytes) return;
+
+  item.downloadTimer = setInterval(() => {
+    const current = downloads[id];
+    if (!current || current.cancelled || current.status !== "in_progress") return;
+
+    try {
+      const bytesDownloaded = listDownloadFiles(current.workDir)
+        .filter((file) => !file.endsWith(".aria2") && !file.endsWith(".ytdl"))
+        .reduce((total, file) => total + fs.statSync(file).size, 0);
+
+      if (bytesDownloaded <= 0) return;
+
+      updateDownload(id, {
+        phase: "downloading_video",
+        message: phaseMessages.downloading_video,
+        bytesDownloaded,
+        totalBytes,
+        progress: Math.min(89, 15 + Math.round((bytesDownloaded / totalBytes) * 74)),
+      });
+    } catch (_) {}
+  }, 1000);
+  item.downloadTimer.unref?.();
 };
 
 const startProcessingMonitor = (id) => {
@@ -190,7 +543,67 @@ function startQueuedDownloads() {
 
     activeDownloads += 1;
     item.slotActive = true;
-    executeYtDlp(id, item.format, item.workDir, item.url);
+    startDownload(id);
+  }
+}
+
+async function startDownload(id) {
+  const item = downloads[id];
+  if (!item || item.cancelled || item.status !== "queued") {
+    releaseDownloadSlot(id);
+    return;
+  }
+
+  try {
+    const resolved = await resolveHostedFilePageUrl(item.url);
+
+    if (!downloads[id] || downloads[id].cancelled || downloads[id].status !== "queued") {
+      releaseDownloadSlot(id);
+      return;
+    }
+
+    item.resolvedUrl = resolved.url;
+    item.referer = resolved.referer || null;
+    item.filename = resolved.filename || item.filename;
+    item.titleHint = resolved.title || (resolved.filename && path.basename(resolved.filename, path.extname(resolved.filename))) || item.titleHint;
+    item.totalBytes = resolved.totalBytes || item.totalBytes;
+    executeYtDlp(id, item.format, item.workDir, resolved.url, {
+      filename: resolved.filename,
+      referer: resolved.referer,
+      singleConnection: resolved.singleConnection,
+      allowUnsafeExt: resolved.allowUnsafeExt,
+      totalBytes: resolved.totalBytes,
+    });
+  } catch (error) {
+    if (isTransientDownloadError(error.message) && (item.retryCount || 0) < 2) {
+      const retryCount = (item.retryCount || 0) + 1;
+      cleanupFailedFiles(item);
+      updateDownload(id, {
+        status: "queued",
+        phase: "queued",
+        progress: 0,
+        filename: null,
+        bytesDownloaded: 0,
+        totalBytes: null,
+        speed: null,
+        eta: null,
+        retryCount,
+        message: `Nova tentativa automática ${retryCount}/2`,
+        error: null,
+        process: null,
+      });
+      pendingDownloads.push(id);
+      releaseDownloadSlot(id);
+      return;
+    }
+
+    updateDownload(id, {
+      status: "error",
+      phase: "error",
+      message: "Erro ao preparar o download",
+      error: formatYtDlpError(error.message, 1),
+    });
+    releaseDownloadSlot(id);
   }
 }
 
@@ -258,11 +671,8 @@ const fallbackTitleFromUrl = (url) => {
 
 const cleanTitleHint = (title, url) => {
   if (!title) return fallbackTitleFromUrl(url);
-  const cleaned = sanitizeFilename(title)
-    .replace(/\s*[-|]\s*SpankBang.*$/i, "")
-    .replace(/^SpankBang\s*[-|]\s*/i, "")
-    .trim();
-  return cleaned && !/^SpankBang$/i.test(cleaned) ? cleaned : fallbackTitleFromUrl(url);
+  const cleaned = sanitizeFilename(title).trim();
+  return cleaned || fallbackTitleFromUrl(url);
 };
 
 const applyFallbackFilename = (filePath, item) => {
@@ -356,7 +766,7 @@ const formatYtDlpError = (stderr, code) => {
     return "yt-dlp precisa de suporte a impersonation/curl_cffi para este site. Recrie a imagem Docker para instalar as dependencias atualizadas.";
   }
 
-  if (/Could not resolve host|Temporary failure in name resolution|Failed to resolve/i.test(fallback)) {
+  if (/Could not resolve host|Temporary failure in name resolution|Failed to resolve|getaddrinfo\s+(?:EAI_AGAIN|ENOTFOUND)|ENOTFOUND/i.test(fallback)) {
     return "Falha temporária de DNS ao localizar o site ou a CDN. Use Repetir para tentar novamente.";
   }
 
@@ -372,7 +782,7 @@ const formatYtDlpError = (stderr, code) => {
 };
 
 const isTransientDownloadError = (error) => {
-  return /Could not resolve host|Temporary failure in name resolution|Failed to resolve|HTTP Error 502|Bad Gateway|timed out|Unable to download webpage/i.test(error);
+  return /Could not resolve host|Temporary failure in name resolution|Failed to resolve|getaddrinfo\s+(?:EAI_AGAIN|ENOTFOUND)|ENOTFOUND|HTTP Error 502|Bad Gateway|timed out|Unable to download webpage/i.test(error);
 };
 
 const cleanupFailedFiles = (item) => {
@@ -455,9 +865,26 @@ app.get("/health", (req, res) => {
   });
 });
 
-const executeYtDlp = (id, format, location, url) => {
+const executeYtDlp = (id, format, location, url, options = {}) => {
+  const outputName = options.filename ? safeFilename(options.filename) : null;
+  const outputTemplate = outputName ? path.join(location, outputName) : `${location}/%(title)s.%(ext)s`;
+  const headerArgs = options.referer ? [
+    "--referer",
+    options.referer,
+    "--user-agent",
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0 Safari/537.36",
+  ] : [];
+  const unsafeExtArgs = options.allowUnsafeExt ? ["--compat-options", "allow-unsafe-ext"] : [];
+  const externalDownloaderArgs = options.allowUnsafeExt ? [
+    "--downloader",
+    "aria2c",
+    "--downloader-args",
+    "aria2c:-x 8 -s 8 -k 1M --file-allocation=none --summary-interval=0",
+  ] : [];
+  const concurrentFragments = options.singleConnection ? "1" : "4";
   const progressArgs = [
     "--newline",
+    "--no-warnings",
     "--progress",
     "--print",
     "before_dl:MEDIAHARVEST_TOTAL %(filesize,filesize_approx)s",
@@ -477,6 +904,9 @@ const executeYtDlp = (id, format, location, url) => {
     "fragment:exp=1:20",
     "--socket-timeout",
     "20",
+    "--force-ipv4",
+    "--impersonate",
+    "chrome",
     "--extractor-args",
     "generic:impersonate",
   ];
@@ -492,8 +922,11 @@ const executeYtDlp = (id, format, location, url) => {
       "--add-metadata",
       "-x",
       "--no-playlist",
+      ...unsafeExtArgs,
+      ...externalDownloaderArgs,
+      ...headerArgs,
       "-o",
-      `${location}/%(title)s.%(ext)s`,
+      outputTemplate,
       url,
     ];
   } else {
@@ -503,9 +936,12 @@ const executeYtDlp = (id, format, location, url) => {
       format,
       "--no-playlist",
       "-N",
-      "4",
+      concurrentFragments,
+      ...unsafeExtArgs,
+      ...externalDownloaderArgs,
+      ...headerArgs,
       "-o",
-      `${location}/%(title)s.%(ext)s`,
+      outputTemplate,
       url,
     ];
   }
@@ -515,6 +951,10 @@ const executeYtDlp = (id, format, location, url) => {
     windowsHide: true,
     stdio: ["ignore", "pipe", "pipe"],
   });
+
+  if (options.totalBytes) {
+    startFileDownloadMonitor(id, options.totalBytes);
+  }
 
   if (downloads[id]) {
     downloads[id].process = ytDlpProcess;
@@ -666,6 +1106,7 @@ const executeYtDlp = (id, format, location, url) => {
 
   ytDlpProcess.on("error", (error) => {
     clearInterval(downloads[id]?.extractionTimer);
+    clearInterval(downloads[id]?.downloadTimer);
     clearInterval(downloads[id]?.processingTimer);
     console.error(`[${id}] erro ao iniciar yt-dlp: ${error.message}`);
 
@@ -684,6 +1125,7 @@ const executeYtDlp = (id, format, location, url) => {
     handleYtDlpOutput("\n", "stdout");
     handleYtDlpOutput("\n", "stderr");
     clearInterval(downloads[id]?.extractionTimer);
+    clearInterval(downloads[id]?.downloadTimer);
     clearInterval(downloads[id]?.processingTimer);
     console.log(`[${id}] yt-dlp finalizado code=${code} signal=${signal || "none"}`);
 

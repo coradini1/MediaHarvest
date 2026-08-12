@@ -1,7 +1,7 @@
 FROM node:20-bookworm-slim
 
 RUN apt-get update \
-  && apt-get install -y --no-install-recommends ffmpeg python3 python3-pip curl ca-certificates \
+  && apt-get install -y --no-install-recommends ffmpeg python3 python3-pip curl ca-certificates aria2 \
   && python3 -m pip install --break-system-packages --no-cache-dir "yt-dlp[default,curl-cffi]" \
   && apt-get clean \
   && rm -rf /var/lib/apt/lists/*
