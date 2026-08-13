@@ -338,6 +338,27 @@ async function saveVideoButtonToggle(event) {
   }
 }
 
+async function loadPageButtonToggle() {
+  const result = await callApi(
+    extensionApi.storage.local.get,
+    extensionApi.storage.local,
+    ["showPageButton"]
+  );
+  document.getElementById("togglePageButton").checked = result.showPageButton !== false;
+}
+
+async function savePageButtonToggle(event) {
+  const enabled = event.currentTarget.checked;
+  try {
+    await callApi(extensionApi.storage.local.set, extensionApi.storage.local, {
+      showPageButton: enabled,
+    });
+    popupToast(enabled ? "Botão na página ativado" : "Botão na página desativado");
+  } catch (error) {
+    popupToast(error.message || "Não foi possível salvar");
+  }
+}
+
 let toastTimer;
 function popupToast(message) {
   const alert = document.getElementById("alert");
@@ -355,6 +376,7 @@ document.getElementById("submitButton").addEventListener("click", savePath);
 document.getElementById("deletePath").addEventListener("click", resetPath);
 document.getElementById("openFolder").addEventListener("click", openFolder);
 document.getElementById("toggleVideoButton").addEventListener("change", saveVideoButtonToggle);
+document.getElementById("togglePageButton").addEventListener("change", savePageButtonToggle);
 document.getElementById("saveCookies").addEventListener("click", saveCookies);
 document.getElementById("clearCookies").addEventListener("click", clearCookies);
 
@@ -371,6 +393,7 @@ document.addEventListener("DOMContentLoaded", async () => {
       : settings.locationPath;
     checkServer(settings.backendUrl);
     await loadVideoButtonToggle();
+    await loadPageButtonToggle();
     await loadCookies();
     const response = await sendMessage({ type: "getDownloads" }).catch(() => null);
     renderDownloads(response?.downloads || []);

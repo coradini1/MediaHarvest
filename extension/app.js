@@ -64,18 +64,29 @@ if (extensionApi.runtime && extensionApi.runtime.onMessage) {
 }
 
 let videoButtonEnabled = true;
+let pageButtonEnabled = true;
 
-storageGet(["showVideoButton"], (result) => {
+storageGet(["showVideoButton", "showPageButton"], (result) => {
   videoButtonEnabled = result?.showVideoButton !== false;
+  pageButtonEnabled = result?.showPageButton !== false;
   startObserver();
 });
 
 if (extensionApi.storage && extensionApi.storage.onChanged) {
   extensionApi.storage.onChanged.addListener((changes, area) => {
-    if (area !== "local" || !changes.showVideoButton) return;
-    videoButtonEnabled = changes.showVideoButton.newValue !== false;
-    if (videoButtonEnabled) injectPageControls();
-    else removeNativeVideoButtons();
+    if (area !== "local") return;
+
+    if (changes.showVideoButton) {
+      videoButtonEnabled = changes.showVideoButton.newValue !== false;
+      if (videoButtonEnabled) injectPageControls();
+      else removeNativeVideoButtons();
+    }
+
+    if (changes.showPageButton) {
+      pageButtonEnabled = changes.showPageButton.newValue !== false;
+      if (pageButtonEnabled) injectPageDownloadButton();
+      else removePageDownloadButton();
+    }
   });
 }
 
@@ -89,6 +100,7 @@ function injectPageControls() {
   }
 
   injectNativeVideoButtons();
+  injectPageDownloadButton();
 }
 
 function startObserver() {
@@ -112,6 +124,86 @@ function removeNativeVideoButtons() {
   document
     .querySelectorAll("#media-harvest-native-button, .media-harvest-native-button")
     .forEach((button) => button.remove());
+}
+
+function removePageDownloadButton() {
+  const existing = document.getElementById("media-harvest-page-button");
+  if (existing) existing.remove();
+}
+
+function ensurePageButtonStyle() {
+  if (document.getElementById("media-harvest-page-button-style")) return;
+
+  const style = document.createElement("style");
+  style.id = "media-harvest-page-button-style";
+  style.textContent = `
+    #media-harvest-page-button { position:fixed; left:16px; bottom:16px; z-index:2147483647; display:flex; align-items:center; gap:4px; padding:4px; border:1px solid rgba(255,255,255,.16); border-radius:9px; background:rgba(20,20,22,.92); box-shadow:0 4px 16px rgba(0,0,0,.32); opacity:.5; transition:opacity .15s ease; font:600 12px -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif; }
+    #media-harvest-page-button:hover { opacity:1; }
+    .mh-page-download { height:28px; padding:0 11px; border:0; border-radius:6px; background:#f1f1f1; color:#18181a; cursor:pointer; font:inherit; }
+    .mh-page-download.mh-page-wa { padding:0 9px; background:#353537; color:#f5f5f5; }
+    .mh-page-download:hover { background:#fff; }
+    .mh-page-download.mh-page-wa:hover { background:#4b4b4e; }
+    .mh-page-download:disabled { opacity:.55; cursor:wait; }
+    .mh-page-hide { width:22px; height:28px; border:0; border-radius:6px; background:transparent; color:#aaa; cursor:pointer; font-size:15px; line-height:1; }
+    .mh-page-hide:hover { color:#fff; }
+  `;
+
+  document.head.appendChild(style);
+}
+
+function injectPageDownloadButton() {
+  if (!pageButtonEnabled) return;
+  if (sessionStorage.getItem(`mediaHarvestPageButtonHidden:${site}`) === "true") return;
+  if (document.getElementById("media-harvest-page-button")) return;
+  if (!document.body) return;
+
+  ensurePageButtonStyle();
+
+  const wrap = document.createElement("div");
+  wrap.id = "media-harvest-page-button";
+  wrap.innerHTML = `
+    <button type="button" class="mh-page-download" data-page-download="original" title="Baixar esta página em qualidade original">⬇ Baixar</button>
+    <button type="button" class="mh-page-download mh-page-wa" data-page-download="whatsapp" title="Baixar versão para WhatsApp (até 20MB)">W</button>
+    <button type="button" class="mh-page-hide" title="Ocultar nesta aba" aria-label="Ocultar botão do Media Harvest">×</button>
+  `;
+
+  wrap.addEventListener("click", (event) => {
+    if (event.target.closest(".mh-page-hide")) {
+      event.preventDefault();
+      event.stopPropagation();
+      sessionStorage.setItem(`mediaHarvestPageButtonHidden:${site}`, "true");
+      wrap.remove();
+      showToast("Botão ocultado nesta aba");
+      return;
+    }
+
+    const option = event.target.closest("[data-page-download]");
+    if (!option) return;
+    event.preventDefault();
+    event.stopPropagation();
+    startPageDownload(option);
+  });
+
+  document.body.appendChild(wrap);
+}
+
+function startPageDownload(option) {
+  const download = option.dataset.pageDownload || "original";
+  option.disabled = true;
+
+  storageGet(["locationPath", "backendUrl"], async (result) => {
+    const backendUrl = getBackendUrl(result);
+    const locationPath = result.locationPath || DEFAULT_DOWNLOAD_PATH;
+
+    try {
+      await startManagedDownload(backendUrl, window.location.href, locationPath, download);
+      showToast("Download adicionado");
+    } catch (err) {
+      showToast(err.message || "Erro ao conectar ao servidor");
+    } finally {
+      option.disabled = false;
+    }
+  });
 }
 
 function injectNativeVideoButtons() {
