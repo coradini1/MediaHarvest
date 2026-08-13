@@ -283,6 +283,39 @@ async function openFolder() {
   }
 }
 
+async function loadWorkers() {
+  try {
+    const settings = await getSettings();
+    const response = await fetchWithTimeout(`${settings.backendUrl}/settings`);
+    if (!response.ok) throw new Error();
+    const data = await response.json();
+    const input = document.getElementById("workersInput");
+    input.value = data.maxConcurrentDownloads || 1;
+    if (data.maxWorkersLimit) input.max = data.maxWorkersLimit;
+  } catch (_) {
+    // servidor offline: mantém o placeholder
+  }
+}
+
+async function saveWorkers() {
+  const input = document.getElementById("workersInput");
+  const value = Math.max(1, Math.min(8, Math.floor(Number(input.value) || 1)));
+  try {
+    const settings = await getSettings();
+    const response = await fetchWithTimeout(`${settings.backendUrl}/settings`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ maxConcurrentDownloads: value }),
+    });
+    if (!response.ok) throw new Error(await response.text());
+    const data = await response.json();
+    input.value = data.maxConcurrentDownloads;
+    popupToast(`Downloads simultâneos: ${data.maxConcurrentDownloads}`);
+  } catch (error) {
+    popupToast(error.message || "Não foi possível salvar");
+  }
+}
+
 async function loadCookies() {
   const result = await callApi(
     extensionApi.storage.local.get,
@@ -377,6 +410,7 @@ document.getElementById("deletePath").addEventListener("click", resetPath);
 document.getElementById("openFolder").addEventListener("click", openFolder);
 document.getElementById("toggleVideoButton").addEventListener("change", saveVideoButtonToggle);
 document.getElementById("togglePageButton").addEventListener("change", savePageButtonToggle);
+document.getElementById("saveWorkers").addEventListener("click", saveWorkers);
 document.getElementById("saveCookies").addEventListener("click", saveCookies);
 document.getElementById("clearCookies").addEventListener("click", clearCookies);
 
@@ -394,6 +428,7 @@ document.addEventListener("DOMContentLoaded", async () => {
     checkServer(settings.backendUrl);
     await loadVideoButtonToggle();
     await loadPageButtonToggle();
+    await loadWorkers();
     await loadCookies();
     const response = await sendMessage({ type: "getDownloads" }).catch(() => null);
     renderDownloads(response?.downloads || []);

@@ -76,6 +76,12 @@
           <input type="text" id="folderPathInput" placeholder="/downloads" />
           <button id="submitButton">Salvar</button>
         </div>
+
+        <label for="workersInput">Downloads simultâneos (workers)</label>
+        <div class="input-row">
+          <input type="number" id="workersInput" min="1" max="8" step="1" placeholder="2" />
+          <button id="saveWorkers">Salvar</button>
+        </div>
         <div class="settings-actions">
           <button id="deletePath">Usar padrão</button>
           <button id="openFolder">Abrir pasta</button>

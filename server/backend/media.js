@@ -22,7 +22,8 @@ const downloads = {};
 const DOWNLOAD_DIR = process.env.DOWNLOAD_DIR;
 const YT_DLP_PATH = process.env.YT_DLP_PATH || "yt-dlp";
 const CANCEL_RETENTION_MS = 10 * 60 * 1000;
-const MAX_CONCURRENT_DOWNLOADS = Math.max(1, Number(process.env.MAX_CONCURRENT_DOWNLOADS) || 2);
+const MAX_WORKERS_LIMIT = 8;
+let maxConcurrentDownloads = Math.max(1, Math.min(MAX_WORKERS_LIMIT, Number(process.env.MAX_CONCURRENT_DOWNLOADS) || 2));
 const pendingDownloads = [];
 let activeDownloads = 0;
 
@@ -536,7 +537,7 @@ const releaseDownloadSlot = (id) => {
 };
 
 function startQueuedDownloads() {
-  while (activeDownloads < MAX_CONCURRENT_DOWNLOADS && pendingDownloads.length) {
+  while (activeDownloads < maxConcurrentDownloads && pendingDownloads.length) {
     const id = pendingDownloads.shift();
     const item = downloads[id];
     if (!item || item.cancelled || item.status !== "queued") continue;
@@ -864,7 +865,31 @@ app.get("/health", (req, res) => {
     status: "ok",
     activeDownloads,
     queuedDownloads: pendingDownloads.length,
-    maxConcurrentDownloads: MAX_CONCURRENT_DOWNLOADS,
+    maxConcurrentDownloads,
+  });
+});
+
+app.get("/settings", (req, res) => {
+  res.status(200).json({
+    maxConcurrentDownloads,
+    maxWorkersLimit: MAX_WORKERS_LIMIT,
+  });
+});
+
+app.post("/settings", (req, res) => {
+  const requested = Number(req.body?.maxConcurrentDownloads);
+
+  if (!Number.isFinite(requested)) {
+    return res.status(400).json({ error: "maxConcurrentDownloads inválido" });
+  }
+
+  maxConcurrentDownloads = Math.max(1, Math.min(MAX_WORKERS_LIMIT, Math.floor(requested)));
+  console.log(`workers ajustado para ${maxConcurrentDownloads}`);
+  startQueuedDownloads();
+
+  res.status(200).json({
+    maxConcurrentDownloads,
+    maxWorkersLimit: MAX_WORKERS_LIMIT,
   });
 });
 
