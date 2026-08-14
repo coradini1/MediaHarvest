@@ -387,23 +387,31 @@ function ensureNativeVideoStyle() {
 // depender de aria-expanded no clique é frágil — capturamos antes.
 let lastTweetContextUrl = null;
 
+function cleanStatusUrl(href) {
+  if (!href) return null;
+  // O match para em \d+, então /status/123/photo/1 já vira .../status/123.
+  const m = href.match(/^https?:\/\/(?:x|twitter)\.com\/[^/]+\/status\/\d+/i);
+  return m ? m[0] : null;
+}
+
 function extractTweetUrlFromArticle(article) {
   if (!article) return null;
+
+  // O link do PRÓPRIO tweet é o do timestamp (o <a> que envolve o <time>).
+  // Quotes/replies embutidos não têm o <time> do article, então isso evita
+  // pegar o vídeo de um comentário por engano.
+  const timeEl = article.querySelector("a[href*='/status/'] time");
+  if (timeEl) {
+    const anchor = timeEl.closest("a[href*='/status/']");
+    const url = cleanStatusUrl(anchor && anchor.href);
+    if (url) return url;
+  }
+
+  // Fallback: primeiro link /status/ "limpo" do article.
   const links = [...article.querySelectorAll('a[href*="/status/"]')];
   for (const a of links) {
-    const href = a.href || "";
-    // link canônico do tweet: /usuario/status/<digitos>, sem /photo, /analytics, etc.
-    const match = href.match(
-      /^https?:\/\/(?:x|twitter)\.com\/[^/]+\/status\/\d+/i
-    );
-    if (match && /\/status\/\d+(?:$|[/?#])/.test(href) && !/\/(photo|analytics|likes|retweets|quotes)\b/i.test(href)) {
-      return match[0];
-    }
-  }
-  // fallback: qualquer link de status
-  for (const a of links) {
-    const m = (a.href || "").match(/^https?:\/\/(?:x|twitter)\.com\/[^/]+\/status\/\d+/i);
-    if (m) return m[0];
+    const url = cleanStatusUrl(a.href);
+    if (url) return url;
   }
   return null;
 }
@@ -416,25 +424,35 @@ function currentPageTweetUrl() {
 }
 
 // Captura o tweet assim que o usuário abre o menu "..." (fase de captura).
+// Só o caret do tweet — nada de outros botões com popup.
 document.addEventListener(
   "pointerdown",
   (e) => {
-    const caret = e.target.closest && e.target.closest('[data-testid="caret"], [aria-haspopup="menu"]');
+    const caret = e.target.closest && e.target.closest('[data-testid="caret"]');
     if (!caret) return;
     const article = caret.closest("article");
-    lastTweetContextUrl = extractTweetUrlFromArticle(article) || currentPageTweetUrl();
+    lastTweetContextUrl = extractTweetUrlFromArticle(article);
   },
   true
 );
 
 function getActiveTweetUrl() {
+  // 1) O caret com menu aberto amarra o Dropdown ao tweet certo, mesmo em
+  //    páginas cheias de replies. Esta é a fonte mais confiável.
+  const openCaret = document.querySelector('[data-testid="caret"][aria-expanded="true"]');
+  if (openCaret) {
+    const url = extractTweetUrlFromArticle(openCaret.closest("article"));
+    if (url) return url;
+  }
+  // 2) URL capturada no pointerdown do caret.
   if (lastTweetContextUrl) return lastTweetContextUrl;
-  // fallback: article com menu aberto
+  // 3) Qualquer article com menu aberto.
   for (const article of document.querySelectorAll("article")) {
     if (!article.querySelector('[aria-expanded="true"]')) continue;
     const url = extractTweetUrlFromArticle(article);
     if (url) return url;
   }
+  // 4) Se estamos na própria página do tweet.
   return currentPageTweetUrl();
 }
 
