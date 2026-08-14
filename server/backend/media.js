@@ -1354,8 +1354,20 @@ app.post("/", (req, res) => {
   let format;
 
   if (download === "whatsapp") {
-    format =
-      'bv[filesize<20M][ext=mp4]+ba.2 / b[vcodec=libx264] / b';
+    // Alvo ~20MB. HLS (Twitter/X) não expõe filesize, então caímos para
+    // filesize_approx e depois limite de altura como proxy de tamanho.
+    // O último fallback (bv*+ba/b) garante que sempre resolve algum formato.
+    format = [
+      "b[filesize<20M]",
+      "bv*[filesize<20M]+ba",
+      "b[filesize_approx<20M]",
+      "bv*[filesize_approx<20M]+ba",
+      "bv*[height<=480]+ba",
+      "b[height<=480]",
+      "bv*[height<=720]+ba",
+      "bv*+ba",
+      "b",
+    ].join("/");
   } else if (download === "mp3") {
     format = "mp3";
   } else {
