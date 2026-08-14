@@ -3,6 +3,7 @@ const { spawn } = require("child_process");
 const cors = require("cors");
 const fs = require("fs");
 const path = require("path");
+const os = require("os");
 const dns = require("dns").promises;
 
 const app = express();
@@ -642,7 +643,9 @@ const findDownloadedFile = (dir) => {
     } else if (
       !entry.name.includes(".part") &&
       !entry.name.endsWith(".ytdl") &&
-      !entry.name.endsWith(".temp")
+      !entry.name.endsWith(".temp") &&
+      !entry.name.endsWith(".aria2") &&
+      entry.name !== "cookies.txt"
     ) {
       return fullPath;
     }
@@ -922,10 +925,12 @@ const executeYtDlp = (id, format, location, url, options = {}) => {
   if (downloads[id]) downloads[id].usedMultiConnection = useMultiConnection;
   let cookieArgs = [];
   if (options.cookies) {
-    const cookiesFile = path.join(location, "cookies.txt");
+    // Grava fora da pasta servida para nunca ser confundido com o arquivo final.
+    const cookiesFile = path.join(os.tmpdir(), `mh-cookies-${id}.txt`);
     try {
       fs.writeFileSync(cookiesFile, options.cookies, "utf8");
       cookieArgs = ["--cookies", cookiesFile];
+      if (downloads[id]) downloads[id].cookiesFile = cookiesFile;
     } catch (err) {
       console.error(`[${id}] falha ao gravar cookies: ${err.message}`);
     }
@@ -1207,6 +1212,10 @@ const executeYtDlp = (id, format, location, url, options = {}) => {
     clearInterval(downloads[id]?.extractionTimer);
     clearInterval(downloads[id]?.downloadTimer);
     clearInterval(downloads[id]?.processingTimer);
+    if (downloads[id]?.cookiesFile) {
+      fs.rm(downloads[id].cookiesFile, { force: true }, () => {});
+      downloads[id].cookiesFile = null;
+    }
     console.log(`[${id}] yt-dlp finalizado code=${code} signal=${signal || "none"}`);
 
     if (!downloads[id] || downloads[id].cancelled || ["cancelled", "error"].includes(downloads[id].status)) {

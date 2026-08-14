@@ -382,6 +382,62 @@ function ensureNativeVideoStyle() {
   document.head.appendChild(style);
 }
 
+// URL do tweet capturada no momento em que o menu "..." é aberto.
+// O menu (Dropdown) é renderizado num portal separado do <article>, então
+// depender de aria-expanded no clique é frágil — capturamos antes.
+let lastTweetContextUrl = null;
+
+function extractTweetUrlFromArticle(article) {
+  if (!article) return null;
+  const links = [...article.querySelectorAll('a[href*="/status/"]')];
+  for (const a of links) {
+    const href = a.href || "";
+    // link canônico do tweet: /usuario/status/<digitos>, sem /photo, /analytics, etc.
+    const match = href.match(
+      /^https?:\/\/(?:x|twitter)\.com\/[^/]+\/status\/\d+/i
+    );
+    if (match && /\/status\/\d+(?:$|[/?#])/.test(href) && !/\/(photo|analytics|likes|retweets|quotes)\b/i.test(href)) {
+      return match[0];
+    }
+  }
+  // fallback: qualquer link de status
+  for (const a of links) {
+    const m = (a.href || "").match(/^https?:\/\/(?:x|twitter)\.com\/[^/]+\/status\/\d+/i);
+    if (m) return m[0];
+  }
+  return null;
+}
+
+function currentPageTweetUrl() {
+  const m = window.location.href.match(
+    /^https?:\/\/(?:x|twitter)\.com\/[^/]+\/status\/\d+/i
+  );
+  return m ? m[0] : null;
+}
+
+// Captura o tweet assim que o usuário abre o menu "..." (fase de captura).
+document.addEventListener(
+  "pointerdown",
+  (e) => {
+    const caret = e.target.closest && e.target.closest('[data-testid="caret"], [aria-haspopup="menu"]');
+    if (!caret) return;
+    const article = caret.closest("article");
+    lastTweetContextUrl = extractTweetUrlFromArticle(article) || currentPageTweetUrl();
+  },
+  true
+);
+
+function getActiveTweetUrl() {
+  if (lastTweetContextUrl) return lastTweetContextUrl;
+  // fallback: article com menu aberto
+  for (const article of document.querySelectorAll("article")) {
+    if (!article.querySelector('[aria-expanded="true"]')) continue;
+    const url = extractTweetUrlFromArticle(article);
+    if (url) return url;
+  }
+  return currentPageTweetUrl();
+}
+
 function injectTwitterButtons() {
   const dropdowns = document.querySelectorAll(
     '[data-testid="Dropdown"]'
@@ -407,6 +463,8 @@ function injectTwitterButtons() {
 
     if (!copyButton) return;
 
+    const tweetUrl = getActiveTweetUrl();
+
     const hdButton = createTwitterButton(
       copyButton,
       "Baixar HD",
@@ -418,6 +476,11 @@ function injectTwitterButtons() {
       "Baixar WhatsApp",
       "whatsapp"
     );
+
+    if (tweetUrl) {
+      hdButton.setAttribute("data-tweet-url", tweetUrl);
+      whatsappButton.setAttribute("data-tweet-url", tweetUrl);
+    }
 
     dropdown.appendChild(hdButton);
 
@@ -885,50 +948,12 @@ document.addEventListener(
       button.getAttribute("data-download-type");
 
     try {
-      // pega todos tweets visíveis
-      const tweets = [
-        ...document.querySelectorAll("article"),
-      ];
-
-      let tweetUrl = null;
-
-      // pega o tweet que está com menu aberto
-      for (const tweet of tweets) {
-        const menuOpen = tweet.querySelector(
-          '[aria-expanded="true"]'
-        );
-
-        if (!menuOpen) continue;
-
-        const links = [
-          ...tweet.querySelectorAll(
-            'a[href*="/status/"]'
-          ),
-        ];
-
-        const valid = links.find((a) => {
-          return (
-            a.href &&
-            a.href.includes("/status/")
-          );
-        });
-
-        if (valid) {
-          tweetUrl = valid.href.split("?")[0];
-          break;
-        }
-      }
+      // URL capturada quando o menu abriu; fallback pra detecção ao vivo.
+      const tweetUrl =
+        button.getAttribute("data-tweet-url") || getActiveTweetUrl();
 
       if (!tweetUrl) {
-        const current = window.location.href;
-
-        if (current.includes("/status/")) {
-          tweetUrl = current.split("?")[0];
-        }
-      }
-
-      if (!tweetUrl) {
-        showToast("Tweet URL não encontrada");
+        showToast("Não achei o link do tweet. Abra o tweet e tente de novo.");
         return;
       }
 
