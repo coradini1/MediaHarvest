@@ -4,12 +4,16 @@ services:
     container_name: mediaharvest
     restart: unless-stopped
     dns:
+      - 192.168.0.29
       - 1.1.1.1
-      - 8.8.8.8
     environment:
       PORT: 3000
       DOWNLOAD_DIR: /downloads
-      MAX_CONCURRENT_DOWNLOADS: 2
+      MAX_CONCURRENT_DOWNLOADS: 1
+      YTDLP_AUTO_UPDATE: "1"
+      YTDLP_UPDATE_INTERVAL_HOURS: "12"
+      WHATSAPP_MAX_MB: "15"
+      WHATSAPP_MAX_LONG_SIDE: "1280"
     ports:
       - "3000:3000"
     volumes:

@@ -98,6 +98,7 @@ const publicDownloadState = (id, item) => ({
     ? `${item.retryCount ? item.message : "Na fila"} · posição ${Math.max(1, pendingDownloads.indexOf(id) + 1)}`
     : item.message || phaseMessages[item.status] || item.status,
   error: item.error || null,
+  errorDetail: item.errorDetail || null,
 });
 
 const formatElapsed = (seconds) => {
@@ -292,7 +293,7 @@ const extractGenericHtmlTitle = (html) => {
     || extractMetaContent(html, "og:title")
     || (String(html || "").match(/<title>([^<]+)<\/title>/i) || [])[1];
 
-  return safeFilename(String(title || "").replace(/\s*-\s*[^-<]{2,40}\s*$/i, ""));
+  return safeFilename(String(title || "").replace(/\s+[-|\u2013\u2014]\s+[^-<]{2,40}\s*$/i, ""));
 };
 
 const resolveGenericHtmlMediaPageUrl = async (url) => {
@@ -364,6 +365,22 @@ const safeFilename = (filename) => {
     .trim();
 
   return clean || null;
+};
+
+const resolveInitialUrl = async (url) => {
+  let parsed;
+
+  try {
+    parsed = new URL(url);
+  } catch (_) {
+    return { url };
+  }
+
+  if (parsed.pathname.startsWith("/f/")) {
+    return resolveHostedFilePageUrl(url);
+  }
+
+  return { url };
 };
 
 const resolveHostedFilePageUrl = async (url) => {
@@ -557,7 +574,9 @@ async function startDownload(id) {
   }
 
   try {
-    const resolved = await resolveHostedFilePageUrl(item.url);
+    const resolved = item.useScrapeFallback
+      ? await resolveGenericHtmlMediaPageUrl(item.url)
+      : await resolveInitialUrl(item.url);
 
     if (!downloads[id] || downloads[id].cancelled || downloads[id].status !== "queued") {
       releaseDownloadSlot(id);
@@ -607,6 +626,7 @@ async function startDownload(id) {
       phase: "error",
       message: "Erro ao preparar o download",
       error: formatYtDlpError(error.message, 1),
+      errorDetail: String(error.stack || error.message).trim().slice(-2000),
     });
     releaseDownloadSlot(id);
   }
@@ -630,6 +650,268 @@ app.use((req, res, next) => {
 
   next();
 });
+
+const FFMPEG_PATH = process.env.FFMPEG_PATH || "ffmpeg";
+const FFPROBE_PATH = process.env.FFPROBE_PATH || "ffprobe";
+const WHATSAPP_MAX_BYTES = Math.max(1, Number(process.env.WHATSAPP_MAX_MB) || 15) * 1024 * 1024;
+const WHATSAPP_MAX_LONG_SIDE = Math.max(240, Number(process.env.WHATSAPP_MAX_LONG_SIDE) || 1280);
+
+const runCommand = (command, args, { timeoutMs = 0, onStderr = null, onSpawn = null } = {}) => {
+  return new Promise((resolve) => {
+    let child;
+
+    try {
+      child = spawn(command, args, {
+        detached: process.platform !== "win32",
+        windowsHide: true,
+        stdio: ["ignore", "pipe", "pipe"],
+      });
+    } catch (err) {
+      return resolve({ code: -1, stdout: "", stderr: String(err && err.message) });
+    }
+
+    let stdout = "";
+    let stderr = "";
+    let timer = null;
+
+    if (onSpawn) onSpawn(child);
+
+    if (timeoutMs > 0) {
+      timer = setTimeout(() => killProcessTree(child), timeoutMs);
+      timer.unref?.();
+    }
+
+    child.stdout.on("data", (chunk) => { stdout += chunk.toString(); });
+    child.stderr.on("data", (chunk) => {
+      const text = chunk.toString();
+      stderr = (stderr + text).slice(-8000);
+      if (onStderr) onStderr(text);
+    });
+    child.on("error", (err) => {
+      if (timer) clearTimeout(timer);
+      resolve({ code: -1, stdout, stderr: `${stderr}\n${err.message}` });
+    });
+    child.on("close", (code) => {
+      if (timer) clearTimeout(timer);
+      resolve({ code, stdout, stderr });
+    });
+  });
+};
+
+const probeMedia = async (filePath) => {
+  const result = await runCommand(FFPROBE_PATH, [
+    "-v", "error",
+    "-show_streams",
+    "-show_format",
+    "-of", "json",
+    filePath,
+  ], { timeoutMs: 60 * 1000 });
+
+  if (result.code !== 0) return null;
+
+  try {
+    const parsed = JSON.parse(result.stdout);
+    const streams = Array.isArray(parsed.streams) ? parsed.streams : [];
+    const video = streams.find((stream) => stream.codec_type === "video");
+    const audio = streams.find((stream) => stream.codec_type === "audio");
+
+    return {
+      video: video || null,
+      audio: audio || null,
+      duration: Number(parsed.format && parsed.format.duration) || Number(video && video.duration) || 0,
+      formatNames: String((parsed.format && parsed.format.format_name) || "").split(","),
+    };
+  } catch (_) {
+    return null;
+  }
+};
+
+const isCoverArtStream = (stream) => {
+  if (!stream) return false;
+  if (stream.disposition && stream.disposition.attached_pic) return true;
+  return ["mjpeg", "png", "bmp", "gif", "webp"].includes(stream.codec_name);
+};
+
+const describeWhatsappIssues = (probe, fileSize, filePath) => {
+  const issues = [];
+
+  if (!probe || !probe.video || isCoverArtStream(probe.video)) {
+    return issues;
+  }
+
+  const video = probe.video;
+  const audio = probe.audio;
+
+  if (path.extname(filePath).toLowerCase() !== ".mp4" || !probe.formatNames.some((name) => ["mp4", "mov", "m4a", "3gp", "isom"].includes(name.trim()))) {
+    issues.push("container");
+  }
+
+  if (video.codec_name !== "h264") issues.push("vcodec");
+  if (video.pix_fmt && video.pix_fmt !== "yuv420p") issues.push("pixfmt");
+  if (Number(video.width) % 2 || Number(video.height) % 2) issues.push("dimensoes");
+  if (Math.max(Number(video.width) || 0, Number(video.height) || 0) > WHATSAPP_MAX_LONG_SIDE) issues.push("resolucao");
+
+  if (!audio) {
+  } else if (audio.codec_name !== "aac") {
+    issues.push("acodec");
+  } else if (audio.profile && !/LC/i.test(audio.profile)) {
+    issues.push("aacprofile");
+  }
+
+  if (fileSize > WHATSAPP_MAX_BYTES) issues.push("tamanho");
+
+  return issues;
+};
+
+const buildWhatsappFfmpegArgs = (input, output, probe, issues, fileSize, crf) => {
+  const needsVideoEncode = issues.some((issue) => ["vcodec", "pixfmt", "dimensoes", "resolucao", "tamanho"].includes(issue));
+  const needsAudioEncode = issues.some((issue) => ["acodec", "aacprofile", "tamanho"].includes(issue));
+  const args = ["-y", "-hide_banner", "-nostdin", "-i", input, "-map", "0:v:0?", "-map", "0:a:0?"];
+
+  if (needsVideoEncode) {
+    args.push(
+      "-c:v", "libx264",
+      "-profile:v", "main",
+      "-level", "4.0",
+      "-pix_fmt", "yuv420p",
+      "-preset", "veryfast",
+      "-crf", String(crf),
+      "-vf", `scale='if(gt(iw,ih),min(iw,${WHATSAPP_MAX_LONG_SIDE}),-2)':'if(gt(iw,ih),-2,min(ih,${WHATSAPP_MAX_LONG_SIDE}))':flags=bicubic`,
+    );
+
+    if (issues.includes("tamanho") && probe.duration > 0) {
+      const audioBps = 128 * 1000;
+      const budgetBps = Math.floor((WHATSAPP_MAX_BYTES * 8 * 0.92) / probe.duration) - audioBps;
+      const maxrate = Math.max(200 * 1000, budgetBps);
+      args.push("-maxrate", String(maxrate), "-bufsize", String(maxrate * 2));
+    }
+  } else {
+    args.push("-c:v", "copy");
+  }
+
+  if (!probe.audio) {
+    args.push("-an");
+  } else if (needsAudioEncode) {
+    args.push("-c:a", "aac", "-profile:a", "aac_low", "-b:a", "128k", "-ac", "2", "-ar", "44100");
+  } else {
+    args.push("-c:a", "copy");
+  }
+
+  args.push("-movflags", "+faststart", "-map_metadata", "-1", output);
+
+  return args;
+};
+
+const parseFfmpegTime = (text) => {
+  const match = text.match(/time=(\d+):(\d+):(\d+(?:\.\d+)?)/);
+  if (!match) return null;
+  return Number(match[1]) * 3600 + Number(match[2]) * 60 + Number(match[3]);
+};
+
+const ensureWhatsappCompatible = async (id, filePath) => {
+  const item = downloads[id];
+  if (!item || item.cancelled) return filePath;
+
+  let fileSize = 0;
+
+  try {
+    fileSize = fs.statSync(filePath).size;
+  } catch (_) {
+    return filePath;
+  }
+
+  const probe = await probeMedia(filePath);
+
+  if (!probe) {
+    console.log(`[${id}] ffprobe falhou; entregando o arquivo como veio`);
+    return filePath;
+  }
+
+  const issues = describeWhatsappIssues(probe, fileSize, filePath);
+
+  if (!issues.length) {
+    console.log(`[${id}] ja compativel com WhatsApp (${probe.video ? probe.video.codec_name : "sem video"}/${probe.audio ? probe.audio.codec_name : "mudo"})`);
+    return filePath;
+  }
+
+  console.log(`[${id}] convertendo para WhatsApp (${issues.join(", ")})`);
+
+  const output = path.join(path.dirname(filePath), `${path.basename(filePath, path.extname(filePath))}.whatsapp.mp4`);
+  const attempts = issues.includes("tamanho") ? [26, 30, 34] : [26];
+
+  for (let attempt = 0; attempt < attempts.length; attempt += 1) {
+    if (downloads[id] && downloads[id].cancelled) return filePath;
+
+    updateDownload(id, {
+      phase: "processing",
+      message: attempt === 0 ? "Convertendo para WhatsApp" : `Reduzindo tamanho · tentativa ${attempt + 1}`,
+      processingProgress: 0,
+    });
+
+    const args = buildWhatsappFfmpegArgs(filePath, output, probe, issues, fileSize, attempts[attempt]);
+    const result = await runCommand(FFMPEG_PATH, args, {
+      onSpawn: (child) => { if (downloads[id]) downloads[id].process = child; },
+      onStderr: (text) => {
+        const current = downloads[id];
+        if (!current || !probe.duration) return;
+
+        const seconds = parseFfmpegTime(text);
+        if (seconds === null) return;
+
+        const percent = Math.max(0, Math.min(99, Math.round((seconds / probe.duration) * 100)));
+        current.processingProgress = percent;
+        current.message = attempt === 0
+          ? `Convertendo para WhatsApp · ${percent}%`
+          : `Reduzindo tamanho · ${percent}%`;
+      },
+    });
+
+    if (downloads[id]) downloads[id].process = null;
+    if (downloads[id] && downloads[id].cancelled) return filePath;
+
+    if (result.code !== 0) {
+      console.error(`[${id}] ffmpeg falhou (code=${result.code}): ${result.stderr.trim().slice(-500)}`);
+      try { fs.unlinkSync(output); } catch (_) {}
+      return filePath;
+    }
+
+    let outputSize = 0;
+
+    try {
+      outputSize = fs.statSync(output).size;
+    } catch (_) {
+      return filePath;
+    }
+
+    const stillTooBig = issues.includes("tamanho") && outputSize > WHATSAPP_MAX_BYTES;
+
+    if (!stillTooBig || attempt === attempts.length - 1) {
+      if (stillTooBig) {
+        console.log(`[${id}] ainda acima do limite (${Math.round(outputSize / 1024 / 1024)}MB); entregando assim mesmo`);
+      }
+
+      const finalPath = path.join(path.dirname(filePath), `${path.basename(filePath, path.extname(filePath))}.mp4`);
+
+      try {
+        fs.unlinkSync(filePath);
+      } catch (_) {}
+
+      try {
+        fs.renameSync(output, finalPath);
+      } catch (err) {
+        console.error(`[${id}] falha ao renomear convertido: ${err.message}`);
+        return output;
+      }
+
+      console.log(`[${id}] convertido para WhatsApp: ${Math.round(outputSize / 1024 / 1024 * 10) / 10}MB`);
+      return finalPath;
+    }
+
+    console.log(`[${id}] ${Math.round(outputSize / 1024 / 1024)}MB ainda acima do limite; recomprimindo`);
+  }
+
+  return filePath;
+};
 
 const findDownloadedFile = (dir) => {
   const entries = fs.readdirSync(dir, { withFileTypes: true });
@@ -765,6 +1047,30 @@ const killProcessTree = (child) => {
 const formatYtDlpError = (stderr, code) => {
   const fallback = stderr || `yt-dlp finalizou com código ${code}`;
 
+  if (/Unsupported URL/i.test(fallback)) {
+    return "Nenhum extrator do yt-dlp reconhece este site. Atualize o yt-dlp (POST /update-ytdlp) e tente de novo.";
+  }
+
+  if (/Sign in to confirm|requires authentication|Login required|members-only|This video is private|precisa de login/i.test(fallback)) {
+    return "O video exige login. Envie os cookies do navegador junto com o download.";
+  }
+
+  if (/not available in your country|geo restricted|geo-restricted|blocked in your country/i.test(fallback)) {
+    return "O video esta bloqueado na regiao deste servidor.";
+  }
+
+  if (/HTTP Error 404|has been removed|no longer available|video (?:is )?unavailable/i.test(fallback)) {
+    return "O video nao existe mais ou foi removido do site.";
+  }
+
+  if (/HTTP Error 470/i.test(fallback)) {
+    return "A CDN recusou o link (HTTP 470): o endereco do arquivo expirou ou exige assinatura. Tente novamente para gerar um link novo.";
+  }
+
+  if (/HTTP Error 429|Too Many Requests/i.test(fallback)) {
+    return "O site limitou a taxa de requisicoes (HTTP 429). Aguarde alguns minutos antes de repetir.";
+  }
+
   if (/HTTP Error 410: Gone/i.test(fallback)) {
     return "A pagina do video retornou HTTP 410 Gone. O video pode ter sido removido, bloqueado por regiao/login, ou estar indisponivel para este servidor.";
   }
@@ -782,14 +1088,24 @@ const formatYtDlpError = (stderr, code) => {
   }
 
   if (/Cloudflare anti-bot challenge|HTTP Error 403/i.test(fallback)) {
-    return "O site bloqueou a requisição com proteção anti-bot. Tente novamente mais tarde.";
+    return "O site bloqueou a requisição com proteção anti-bot (HTTP 403). Envie os cookies do navegador ou tente novamente mais tarde.";
   }
 
   return fallback;
 };
 
 const isTransientDownloadError = (error) => {
-  return /Could not resolve host|Temporary failure in name resolution|Failed to resolve|getaddrinfo\s+(?:EAI_AGAIN|ENOTFOUND)|ENOTFOUND|HTTP Error 502|Bad Gateway|timed out|Unable to download webpage/i.test(error);
+  return /Could not resolve host|Temporary failure in name resolution|Failed to resolve|getaddrinfo\s+(?:EAI_AGAIN|ENOTFOUND)|ENOTFOUND|ECONNRESET|ECONNREFUSED|EPIPE|Connection reset|Connection aborted|Remote end closed|HTTP Error 5\d\d|Bad Gateway|Service Unavailable|HTTP Error 429|Too Many Requests|timed out|timeout|The read operation|SSLError|TLS/i.test(String(error || ""));
+};
+
+const shouldTryScrapeFallback = (error) => {
+  const value = String(error || "");
+  if (/\[generic\]/i.test(value)) return true;
+  return /Unsupported URL|No video formats found|Unable to extract (?:video )?(?:url|data|info|formats)/i.test(value);
+};
+
+const isMultiConnectionError = (error) => {
+  return /aria2|external downloader|Unable to rename|fragment/i.test(String(error || ""));
 };
 
 const cleanupFailedFiles = (item) => {
@@ -863,13 +1179,97 @@ const applyProgress = (id, data) => {
   if (data.status === "finished") startProcessingMonitor(id);
 };
 
+const YTDLP_AUTO_UPDATE = process.env.YTDLP_AUTO_UPDATE !== "0";
+const YTDLP_UPDATE_INTERVAL_MS = Math.max(1, Number(process.env.YTDLP_UPDATE_INTERVAL_HOURS) || 12) * 60 * 60 * 1000;
+const YTDLP_UPDATE_TIMEOUT_MS = 5 * 60 * 1000;
+
+let ytDlpVersion = null;
+let ytDlpUpdatedAt = null;
+let ytDlpUpdateInFlight = null;
+
+const readYtDlpVersion = () => new Promise((resolve) => {
+  let out = "";
+
+  try {
+    const child = spawn(YT_DLP_PATH, ["--version"], { stdio: ["ignore", "pipe", "ignore"] });
+    child.stdout.on("data", (chunk) => { out += chunk.toString(); });
+    child.on("error", () => resolve(null));
+    child.on("close", () => resolve(out.trim() || null));
+  } catch (_) {
+    resolve(null);
+  }
+});
+
+const updateYtDlp = () => {
+  if (ytDlpUpdateInFlight) return ytDlpUpdateInFlight;
+
+  const before = ytDlpVersion;
+  console.log(`atualizando yt-dlp (atual: ${before || "desconhecido"})...`);
+
+  ytDlpUpdateInFlight = new Promise((resolve) => {
+    let log = "";
+    const child = spawn("python3", [
+      "-m", "pip", "install",
+      "--break-system-packages", "--no-cache-dir", "--upgrade",
+      "yt-dlp[default,curl-cffi]",
+    ], { stdio: ["ignore", "pipe", "pipe"] });
+
+    const collect = (chunk) => { log += chunk.toString(); };
+    child.stdout.on("data", collect);
+    child.stderr.on("data", collect);
+
+    const timer = setTimeout(() => killProcessTree(child), YTDLP_UPDATE_TIMEOUT_MS);
+
+    child.on("error", (error) => {
+      clearTimeout(timer);
+      console.error(`falha ao atualizar yt-dlp: ${error.message}`);
+      resolve({ ok: false, before, after: before, error: error.message });
+    });
+
+    child.on("close", async (code) => {
+      clearTimeout(timer);
+      ytDlpVersion = await readYtDlpVersion();
+      const ok = code === 0;
+
+      if (ok) {
+        ytDlpUpdatedAt = new Date().toISOString();
+        console.log(`yt-dlp: ${before || "desconhecido"} -> ${ytDlpVersion || "desconhecido"}`);
+      } else {
+        console.error(`falha ao atualizar yt-dlp (code=${code})`);
+      }
+
+      resolve({ ok, before, after: ytDlpVersion, error: ok ? null : log.trim().slice(-2000) });
+    });
+  }).finally(() => { ytDlpUpdateInFlight = null; });
+
+  return ytDlpUpdateInFlight;
+};
+
+const scheduleYtDlpAutoUpdate = () => {
+  const tick = () => {
+    if (activeDownloads > 0 || pendingDownloads.length > 0) return;
+    updateYtDlp().catch(() => {});
+  };
+
+  setTimeout(tick, 30 * 1000).unref?.();
+  setInterval(tick, YTDLP_UPDATE_INTERVAL_MS).unref?.();
+};
+
 app.get("/health", (req, res) => {
   res.status(200).json({
     status: "ok",
     activeDownloads,
     queuedDownloads: pendingDownloads.length,
     maxConcurrentDownloads,
+    ytDlpVersion,
+    ytDlpUpdatedAt,
+    ytDlpAutoUpdate: YTDLP_AUTO_UPDATE,
   });
+});
+
+app.post("/update-ytdlp", async (req, res) => {
+  const result = await updateYtDlp();
+  res.status(result.ok ? 200 : 500).json(result);
 });
 
 app.get("/settings", (req, res) => {
@@ -936,6 +1336,9 @@ const executeYtDlp = (id, format, location, url, options = {}) => {
     }
   }
   const userAgentArgs = options.userAgent ? ["--user-agent", options.userAgent] : [];
+  const formatSortArgs = downloads[id] && downloads[id].download === "whatsapp"
+    ? ["-S", "res:720,vcodec:h264,acodec:aac,+size"]
+    : [];
   const concurrentFragments = options.singleConnection ? "1" : "4";
   const progressArgs = [
     "--newline",
@@ -991,6 +1394,9 @@ const executeYtDlp = (id, format, location, url, options = {}) => {
       ...progressArgs,
       "-f",
       format,
+      "--merge-output-format",
+      "mp4",
+      ...formatSortArgs,
       "--no-playlist",
       "-N",
       concurrentFragments,
@@ -1070,6 +1476,7 @@ const executeYtDlp = (id, format, location, url, options = {}) => {
 
           if (progress) {
             applyProgress(id, progress);
+            if (downloads[id] && progress.bytesDownloaded) downloads[id].downloadStarted = true;
 
             if (progress.progress !== null && progress.progress >= lastLoggedProgress + 10) {
               lastLoggedProgress = progress.progress;
@@ -1113,6 +1520,7 @@ const executeYtDlp = (id, format, location, url, options = {}) => {
         }
 
         if (part.startsWith("MEDIAHARVEST_TOTAL")) {
+          if (downloads[id]) downloads[id].downloadStarted = true;
           const totalBytes = parseNumber(part.replace(/^MEDIAHARVEST_TOTAL\s+/, ""));
 
           if (totalBytes > 0) {
@@ -1229,7 +1637,32 @@ const executeYtDlp = (id, format, location, url, options = {}) => {
       const error = new Error(formatYtDlpError(rawError, code));
       console.error(`[${id}] erro yt-dlp: ${error.message}`);
 
-      if (downloads[id].usedMultiConnection && !downloads[id].noMultiConnection) {
+      if (!downloads[id].downloadStarted && !downloads[id].scrapeFallbackTried && shouldTryScrapeFallback(rawError)) {
+        console.log(`[${id}] extrator dedicado nao reconheceu o site; tentando extrair a midia do HTML`);
+        cleanupFailedFiles(downloads[id]);
+        updateDownload(id, {
+          status: "queued",
+          phase: "queued",
+          progress: 0,
+          filename: null,
+          bytesDownloaded: 0,
+          totalBytes: null,
+          speed: null,
+          eta: null,
+          useScrapeFallback: true,
+          scrapeFallbackTried: true,
+          message: "Procurando o vídeo na página · nova tentativa",
+          error: null,
+          process: null,
+        });
+        pendingDownloads.push(id);
+        releaseDownloadSlot(id);
+        return;
+      }
+
+      if (downloads[id].usedMultiConnection
+        && !downloads[id].noMultiConnection
+        && (downloads[id].downloadStarted || isMultiConnectionError(rawError))) {
         console.log(`[${id}] multi-conexão (aria2) falhou; refazendo em conexão única`);
         cleanupFailedFiles(downloads[id]);
         updateDownload(id, {
@@ -1266,6 +1699,7 @@ const executeYtDlp = (id, format, location, url, options = {}) => {
           retryCount,
           message: `Nova tentativa automática ${retryCount}/2`,
           error: null,
+          errorDetail: null,
           process: null,
         });
         pendingDownloads.push(id);
@@ -1278,6 +1712,7 @@ const executeYtDlp = (id, format, location, url, options = {}) => {
         phase: "error",
         message: "Erro no download",
         error: error.message,
+        errorDetail: String(rawError).trim().slice(-2000),
       });
       cleanupFailedFiles(downloads[id]);
       releaseDownloadSlot(id);
@@ -1301,19 +1736,41 @@ const executeYtDlp = (id, format, location, url, options = {}) => {
         return;
       }
 
-      updateDownload(id, {
-        filePath,
-        filename: path.basename(filePath),
-        bytesDownloaded: fs.statSync(filePath).size,
-        totalBytes: fs.statSync(filePath).size,
-        progress: 100,
-        status: "done",
-        phase: "done",
-        message: phaseMessages.done,
-        speed: null,
-        eta: null,
-      });
-      releaseDownloadSlot(id);
+      const finish = (readyPath) => {
+        if (!downloads[id] || downloads[id].cancelled) {
+          releaseDownloadSlot(id);
+          return;
+        }
+
+        const size = fs.existsSync(readyPath) ? fs.statSync(readyPath).size : 0;
+
+        updateDownload(id, {
+          filePath: readyPath,
+          filename: path.basename(readyPath),
+          bytesDownloaded: size,
+          totalBytes: size,
+          progress: 100,
+          processingProgress: null,
+          status: "done",
+          phase: "done",
+          message: phaseMessages.done,
+          speed: null,
+          eta: null,
+        });
+        releaseDownloadSlot(id);
+      };
+
+      if (downloads[id].download === "whatsapp") {
+        ensureWhatsappCompatible(id, filePath)
+          .then(finish)
+          .catch((err) => {
+            console.error(`[${id}] conversao para WhatsApp falhou: ${err.message}`);
+            finish(filePath);
+          });
+        return;
+      }
+
+      finish(filePath);
     }
   });
 };
@@ -1354,19 +1811,18 @@ app.post("/", (req, res) => {
   let format;
 
   if (download === "whatsapp") {
-    // Alvo ~20MB. HLS (Twitter/X) não expõe filesize, então caímos para
-    // filesize_approx e depois limite de altura como proxy de tamanho.
-    // O último fallback (bv*+ba/b) garante que sempre resolve algum formato.
+    const sizeLimit = `${Math.floor(WHATSAPP_MAX_BYTES / 1024 / 1024)}M`;
+
     format = [
-      "b[filesize<20M]",
-      "bv*[filesize<20M]+ba",
-      "b[filesize_approx<20M]",
-      "bv*[filesize_approx<20M]+ba",
-      "bv*[height<=480]+ba",
-      "b[height<=480]",
+      `b[vcodec^=avc1][filesize<${sizeLimit}]`,
+      `b[vcodec^=avc1][filesize_approx<${sizeLimit}]`,
+      "bv*[vcodec^=avc1][height<=720]+ba[acodec^=mp4a]",
+      "bv*[vcodec^=avc1][height<=720]+ba",
+      "b[height<=720]",
+      "b",
+      "bv*[vcodec^=avc1]+ba[acodec^=mp4a]",
       "bv*[height<=720]+ba",
       "bv*+ba",
-      "b",
     ].join("/");
   } else if (download === "mp3") {
     format = "mp3";
@@ -1484,8 +1940,12 @@ app.get("/file/:id", (req, res) => {
 const PORT = process.env.PORT || 3000;
 
 if (require.main === module) {
-  app.listen(PORT, () => {
+  app.listen(PORT, async () => {
     console.log(`Server running on http://localhost:${PORT}`);
+    ytDlpVersion = await readYtDlpVersion();
+    console.log(`yt-dlp ${ytDlpVersion || "nao encontrado"}`);
+
+    if (YTDLP_AUTO_UPDATE) scheduleYtDlpAutoUpdate();
   });
 }
 
