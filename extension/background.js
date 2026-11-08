@@ -35,6 +35,42 @@ async function getStoredCookies() {
   }
 }
 
+// Le os cookies do navegador para o site do video (ex.: sessao logada do Instagram)
+// e converte para o formato Netscape que o yt-dlp entende.
+async function getBrowserCookies(pageUrl) {
+  if (!extensionApi.cookies?.getAll) return "";
+  try {
+    const host = new URL(pageUrl).hostname.replace(/^www\./, "");
+    const cookies = await callApi(extensionApi.cookies.getAll, extensionApi.cookies, { domain: host });
+    if (!cookies?.length) return "";
+    return cookies.map((c) => {
+      const domain = c.hostOnly ? c.domain : (c.domain.startsWith(".") ? c.domain : `.${c.domain}`);
+      return [
+        c.httpOnly ? `#HttpOnly_${domain}` : domain,
+        c.hostOnly ? "FALSE" : "TRUE",
+        c.path || "/",
+        c.secure ? "TRUE" : "FALSE",
+        c.session || !c.expirationDate ? "0" : String(Math.floor(c.expirationDate)),
+        c.name,
+        c.value,
+      ].join("\t");
+    }).join("\n");
+  } catch (_) {
+    return "";
+  }
+}
+
+async function buildCookies(pageUrl) {
+  const manual = (await getStoredCookies()) || "";
+  const auto = await getBrowserCookies(pageUrl);
+  const manualLines = manual
+    .split(/\r?\n/)
+    .filter((line) => line.trim() && !/^# ?Netscape HTTP Cookie File/i.test(line));
+  const lines = [auto, ...manualLines].filter(Boolean);
+  if (!lines.length) return undefined;
+  return `# Netscape HTTP Cookie File\n${lines.join("\n")}\n`;
+}
+
 async function persistDownloads() {
   const value = [...downloads.values()];
   persistenceQueue = persistenceQueue
@@ -271,7 +307,7 @@ async function startDownload(message, sender) {
   pendingDownloads.add(key);
 
   try {
-    const cookies = await getStoredCookies();
+    const cookies = await buildCookies(message.payload.url);
     const payload = {
       ...message.payload,
       title: message.payload.title || message.meta?.title || null,

@@ -10,7 +10,8 @@
     "storage",
     "scripting",
     "downloads",
-    "alarms"
+    "alarms",
+    "cookies"
   ],
 
   "host_permissions": [
