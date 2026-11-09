@@ -263,6 +263,9 @@ O backend le estas variaveis:
 | `DOWNLOAD_DIR` | vazio | Se definida, forca todos os downloads para esta pasta, ignorando a pasta da extensao. |
 | `YT_DLP_PATH` | `yt-dlp` | Caminho do executavel do `yt-dlp`. |
 | `MAX_CONCURRENT_DOWNLOADS` | `2` | Numero maximo de downloads simultaneos. |
+| `YTDLP_AUTO_UPDATE` | `1` | Atualiza o yt-dlp sozinho quando a fila esta vazia (`0` desliga). |
+| `YTDLP_UPDATE_INTERVAL_HOURS` | `12` | Intervalo entre as atualizacoes automaticas. |
+| `YTDLP_CHANNEL` | `nightly` | Canal do yt-dlp: `nightly` (correcoes de sites chegam antes) ou `stable`. |
 
 Exemplo no Linux/macOS:
 

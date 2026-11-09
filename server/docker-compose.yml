@@ -12,6 +12,8 @@ services:
       MAX_CONCURRENT_DOWNLOADS: 1
       YTDLP_AUTO_UPDATE: "1"
       YTDLP_UPDATE_INTERVAL_HOURS: "12"
+      # nightly pega correcao de extrator antes da estavel; "stable" volta ao normal.
+      YTDLP_CHANNEL: "nightly"
       WHATSAPP_MAX_MB: "15"
       WHATSAPP_MAX_LONG_SIDE: "1280"
     ports:

@@ -1182,6 +1182,8 @@ const applyProgress = (id, data) => {
 const YTDLP_AUTO_UPDATE = process.env.YTDLP_AUTO_UPDATE !== "0";
 const YTDLP_UPDATE_INTERVAL_MS = Math.max(1, Number(process.env.YTDLP_UPDATE_INTERVAL_HOURS) || 12) * 60 * 60 * 1000;
 const YTDLP_UPDATE_TIMEOUT_MS = 5 * 60 * 1000;
+// "nightly" (padrao) pega correcoes de extrator dias/semanas antes da estavel.
+const YTDLP_CHANNEL = (process.env.YTDLP_CHANNEL || "nightly").toLowerCase() === "stable" ? "stable" : "nightly";
 
 let ytDlpVersion = null;
 let ytDlpUpdatedAt = null;
@@ -1204,13 +1206,14 @@ const updateYtDlp = () => {
   if (ytDlpUpdateInFlight) return ytDlpUpdateInFlight;
 
   const before = ytDlpVersion;
-  console.log(`atualizando yt-dlp (atual: ${before || "desconhecido"})...`);
+  console.log(`atualizando yt-dlp [${YTDLP_CHANNEL}] (atual: ${before || "desconhecido"})...`);
 
   ytDlpUpdateInFlight = new Promise((resolve) => {
     let log = "";
     const child = spawn("python3", [
       "-m", "pip", "install",
       "--break-system-packages", "--no-cache-dir", "--upgrade",
+      ...(YTDLP_CHANNEL === "nightly" ? ["--pre"] : []),
       "yt-dlp[default,curl-cffi]",
     ], { stdio: ["ignore", "pipe", "pipe"] });
 
@@ -1264,6 +1267,7 @@ app.get("/health", (req, res) => {
     ytDlpVersion,
     ytDlpUpdatedAt,
     ytDlpAutoUpdate: YTDLP_AUTO_UPDATE,
+    ytDlpChannel: YTDLP_CHANNEL,
   });
 });
 
