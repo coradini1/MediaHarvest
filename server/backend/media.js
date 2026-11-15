@@ -595,7 +595,7 @@ async function startDownload(id) {
       allowUnsafeExt: resolved.allowUnsafeExt,
       totalBytes: resolved.totalBytes,
       noMultiConnection: item.noMultiConnection,
-      cookies: item.cookies,
+      cookies: cookiesForAttempt(item, resolved.url),
       userAgent: item.userAgent,
     });
   } catch (error) {
@@ -1309,6 +1309,23 @@ const parseHumanSize = (value) => {
   return Number.isFinite(amount) ? Math.round(amount * mult) : null;
 };
 
+// Instagram: anonimo funciona e, com cookie de sessao (sessionid), o yt-dlp troca
+// para a API de usuario logado, que hoje responde vazio ("Failed to parse JSON").
+// Por isso a primeira tentativa vai sem cookies; eles so entram se ela falhar.
+const COOKIES_AS_FALLBACK_HOSTS = /(^|.)instagram.com$/i;
+
+const cookiesForAttempt = (item, url) => {
+  if (!item.cookies) return null;
+  if (item.cookiesRetry) return item.cookies;
+  try {
+    if (COOKIES_AS_FALLBACK_HOSTS.test(new URL(url).hostname)) {
+      item.cookiesDeferred = true;
+      return null;
+    }
+  } catch (_) {}
+  return item.cookies;
+};
+
 const executeYtDlp = (id, format, location, url, options = {}) => {
   const outputName = options.filename ? safeFilename(options.filename) : null;
   const outputTemplate = outputName ? path.join(location, outputName) : `${location}/%(title)s.%(ext)s`;
@@ -1681,6 +1698,29 @@ const executeYtDlp = (id, format, location, url, options = {}) => {
           noMultiConnection: true,
           message: "Otimizando conexão · nova tentativa",
           error: null,
+          process: null,
+        });
+        pendingDownloads.push(id);
+        releaseDownloadSlot(id);
+        return;
+      }
+
+      if (downloads[id].cookiesDeferred && !downloads[id].cookiesRetry && !downloads[id].downloadStarted) {
+        console.log(`[${id}] falhou sem cookies; tentando de novo com os cookies do navegador`);
+        cleanupFailedFiles(downloads[id]);
+        updateDownload(id, {
+          status: "queued",
+          phase: "queued",
+          progress: 0,
+          filename: null,
+          bytesDownloaded: 0,
+          totalBytes: null,
+          speed: null,
+          eta: null,
+          cookiesRetry: true,
+          message: "Tentando com login · nova tentativa",
+          error: null,
+          errorDetail: null,
           process: null,
         });
         pendingDownloads.push(id);
